@@ -275,40 +275,7 @@ void ListObjects()
 	}
 }
 
-void UploadObject(const string &file)
-{
-	if (!s_IsLoggedIn)
-	{
-		cout << "tried to upload, but aren't logged in" << endl;
-		return;
-	}
 
-	//mapName = map;
-	cout << "uploading: " << file << endl;
-
-	string uploadPath = username + "/" + file;
-
-	Aws::S3::Model::PutObjectRequest putReq;
-	putReq.WithBucket(bucketName);
-	putReq.WithKey(uploadPath.c_str());
-
-	auto fileToUpload = Aws::MakeShared<Aws::FStream>("uploadstream", file.c_str(), std::ios_base::in | std::ios_base::binary);
-
-	putReq.SetBody(fileToUpload);
-	//putReq.SetKey("test/" + file);
-	auto outcome = s3Client->PutObject(putReq);
-
-	if (outcome.IsSuccess())
-	{
-		cout << "upload " << file << " sucess!" << endl;
-	}
-	else
-	{
-		std::cout << "PutObject error: " <<
-			outcome.GetError().GetExceptionName() << " " <<
-			outcome.GetError().GetMessage() << std::endl;
-	}
-}
 
 
 void CleanupServerConnection()
@@ -371,6 +338,7 @@ bool RequestMapUpload( const string &mapName )
 {
 	myRequest = OpenRequest(Verb::POST, L"/MapServer/rest/maps");
 
+	bool okay = false;
 	if (myRequest != NULL )
 	{
 		AddHeaderContentTypeJSON();
@@ -400,7 +368,7 @@ bool RequestMapUpload( const string &mapName )
 					cout << "you are allowed to upload the map." << endl;
 					//string fullPath = username + "/" + mapName;
 					//Aws::String awsFullPath(fullPath.c_str());
-					return true;
+					okay = true;
 				}
 				else if (statusCode == 304) //not modified for now
 				{
@@ -420,45 +388,43 @@ bool RequestMapUpload( const string &mapName )
 	else
 	{
 		cout << "failed to create request" << endl;
-		return false;
 	}
 
-	return false;
+	return okay;
 }
 
-bool RequestMapDeletion(const string &mapName)
+bool RequestMapDeletion(int id)
 {
-	if (myConnection != NULL)
-		myRequest = WinHttpOpenRequest(myConnection, L"DELETE", L"/MapServer/rest/maps",
-			NULL, WINHTTP_NO_REFERER,
-			WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+	wstring path = L"/MapServer/rest/maps/" + to_wstring(id);
+	myRequest = OpenRequest(Verb::DELETE, path.c_str());
+
+	bool okay = false;
 
 	if (myRequest != NULL)
 	{
-		string sessionHeaderName = "Session-Token:";
-		string sessionHeader = sessionHeaderName + s_AccessToken;
-		wstring wideSessionHeader = wstring(sessionHeader.begin(), sessionHeader.end());
-		LPCWSTR wsh = wideSessionHeader.c_str();
+		AddHeaderSessionToken();
 
-		BOOL bResults = WinHttpAddRequestHeaders(myRequest, L"Content-Type:application/json", -1, WINHTTP_ADDREQ_FLAG_ADD);
-		BOOL bResults1 = WinHttpAddRequestHeaders(myRequest, wsh, -1, WINHTTP_ADDREQ_FLAG_ADD);
-
-		if (!bResults || !bResults1)
+		if (SendRequest())
 		{
-			cout << "failed to add a header" << endl;
+			if (WinHttpReceiveResponse(myRequest, NULL))
+			{
+				int statusCode = GetRequestStatusCode();
+				if (statusCode == 200)
+				{
+					cout << "you have permission to delete the map" << endl;
+					okay = true;
+				}
+				else if (statusCode == 302)
+				{
+					cout << "map doesn't exist. you can't download it." << endl;
+				}
+				else
+				{
+					cout << "error trying to delete map. status code: " << statusCode << endl;
+				}
+			}
 		}
-
-		string message = "{"
-			"\"name\":\"" + mapName + "\""
-			"}";
-		const LPSTR messageBuf = (LPTSTR)message.c_str();
-
-		// Send a request.
-
-		bResults = WinHttpSendRequest(myRequest,
-			WINHTTP_NO_ADDITIONAL_HEADERS, 0, messageBuf, strlen(messageBuf), strlen(messageBuf), 0);
-
-		if (!bResults)
+		else
 		{
 			cout << "sending create map request failed" << endl;
 		}
@@ -470,6 +436,8 @@ bool RequestMapDeletion(const string &mapName)
 	{
 		cout << "failed to create request" << endl;
 	}
+
+	return okay;
 }
 
 bool RequestMapDownload( int id )
@@ -569,19 +537,20 @@ void RequestGetMapList()
 	}
 }
 
-void DeleteObject(const Aws::String &map)
+void RemoveObject(const Aws::String &file)
 {
-	mName = map;
-	cout << "destroying" << endl;
+	cout << "removing " << file << "from server" << endl;
+
+	Aws::String bucketFilePath = Aws::String(username.c_str()) + "/" + file;
 
 	Aws::S3::Model::DeleteObjectRequest delReq;
 	delReq.WithBucket(bucketName);
-	delReq.WithKey(map);
+	delReq.WithKey(bucketFilePath);
 
 	auto outcome = s3Client->DeleteObject(delReq);
 	if (outcome.IsSuccess())
 	{
-		cout << "deleted: " << map << endl;
+		cout << "deleted: " << file << endl;
 	}
 	else
 	{
@@ -591,6 +560,43 @@ void DeleteObject(const Aws::String &map)
 	}
 
 
+}
+
+void UploadObject(const Aws::String &path, const Aws::String &file)
+{
+	if (!s_IsLoggedIn)
+	{
+		cout << "tried to upload, but aren't logged in" << endl;
+		return;
+	}
+
+	//mapName = map;
+	cout << "uploading: " << file << endl;
+
+	Aws::String uploadPath = Aws::String(username.c_str()) + "/" + file;
+
+	Aws::String filePath = path + file;
+
+	Aws::S3::Model::PutObjectRequest putReq;
+	putReq.WithBucket(bucketName);
+	putReq.WithKey(uploadPath);
+
+	auto fileToUpload = Aws::MakeShared<Aws::FStream>("uploadstream", filePath.c_str(), std::ios_base::in | std::ios_base::binary);
+
+	putReq.SetBody(fileToUpload);
+	//putReq.SetKey("test/" + file);
+	auto outcome = s3Client->PutObject(putReq);
+
+	if (outcome.IsSuccess())
+	{
+		cout << "upload " << file << " sucess!" << endl;
+	}
+	else
+	{
+		std::cout << "PutObject error: " <<
+			outcome.GetError().GetExceptionName() << " " <<
+			outcome.GetError().GetMessage() << std::endl;
+	}
 }
 
 void DownloadObject( const Aws::String &path, const Aws::String &file )
@@ -778,18 +784,41 @@ void RunCognitoTest()
 		
 		//string file = mapName + ".brknk";
 		//UploadObject(file);
-		bool uploadRequestResult = RequestMapUpload("gateblank9");
 
+		/*string deleteName = "gateblank8";
+		if (RequestMapUpload(uploadName))
+		{
+			string path = "MyMaps/";
+			string file = uploadName + ".brknk";
+			UploadObject(path.c_str(), file.c_str());
+		}*/
+
+		/*string uploadName = "gateblank8";
+		if (RequestMapUpload(uploadName))
+		{
+			string path = "MyMaps/";
+			string file = uploadName + ".brknk";
+			UploadObject(path.c_str(), file.c_str());
+		}*/
 
 		RequestGetMapList();
 
-		MapEntry &currEntry = mapEntries[0];
-		if (RequestMapDownload(currEntry.id))
+		MapEntry &currEntry = mapEntries[1];
+
+		if (RequestMapDeletion(currEntry.id))
+		{
+			string file = currEntry.name + ".brknk";
+			RemoveObject(file.c_str());
+
+			//have some kind of a flag to also remove it from your local system.
+		}
+
+		/*if (RequestMapDownload(currEntry.id))
 		{
 			string path = currEntry.creatorName + "/";
 			string file = currEntry.name + ".brknk";
 			DownloadObject(path.c_str(), file.c_str());
-		}
+		}*/
 
 		CleanupServerConnection();
 	}
