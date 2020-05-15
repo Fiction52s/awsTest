@@ -1,26 +1,35 @@
-#include <iostream>
 #include <aws/core/Aws.h>
+#include <aws/core/utils/logging/ConsoleLogSystem.h>
+#include <aws/core/utils/memory/stl/AWSStreamFwd.h>
+
 #include <aws/s3/S3Client.h>
 #include <aws/s3/model/Bucket.h>
+
 #include <aws/cognito-identity/CognitoIdentityClient.h>
 #include <aws/cognito-identity/CognitoIdentity_EXPORTS.h>
 #include <aws/cognito-identity/CognitoIdentityEndpoint.h>
 #include <aws/cognito-identity/CognitoIdentityErrorMarshaller.h>
 #include <aws/cognito-identity/CognitoIdentityErrors.h>
 #include <aws/cognito-identity/CognitoIdentityRequest.h>
+#include <aws/cognito-identity/model/CognitoIdentityProvider.h>
+#include <aws/cognito-identity/model/GetCredentialsForIdentityRequest.h>
+#include <aws/cognito-identity/model/GetIdRequest.h>
+
 #include <aws/cognito-idp/CognitoIdentityProviderClient.h>
 #include <aws/cognito-idp/model/InitiateAuthRequest.h>
 #include <aws/cognito-idp/model/ChangePasswordRequest.h>
 #include <aws/cognito-idp/model/RespondToAuthChallengeRequest.h>
-#include <aws/cognito-identity/model/CognitoIdentityProvider.h>
-#include <aws/core/utils/logging/ConsoleLogSystem.h>
-#include <aws/identity-management/auth/CognitoCachingCredentialsProvider.h>
+
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/ListObjectsRequest.h>
 #include <aws/s3/model/PutObjectRequest.h>
 #include <aws/s3/model/DeleteObjectRequest.h>
-#include <aws/core/utils/memory/stl/AWSStreamFwd.h>
+
+#include <aws/identity-management/auth/PersistentCognitoIdentityProvider.h>
+#include <aws/identity-management/auth/CognitoCachingCredentialsProvider.h>
+
 #include <fstream>
+#include <iostream>
 
 #include <Windows.h>
 #include <winhttp.h>
@@ -30,7 +39,6 @@
 #undef DELETE
 
 #include "ClientID.h"
-
 #include "nlohmann\json.hpp"
 
 
@@ -42,13 +50,14 @@ using namespace Aws::CognitoIdentity::Model;
 
 using std::cout;
 
-Aws::S3::S3Client *s3Client;
+static Aws::S3::S3Client *s3Client = NULL;
 
-const char bucketName[] = "breakneckmapbucketeast";
+const char bucketName[] = "breakneckmaps";
 
 static Aws::String mName;
 
 static std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
+static std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> s_c;
 static bool s_IsLoggedIn = false;
 static string s_TokenType;
 static string s_AccessToken;
@@ -65,43 +74,42 @@ HINTERNET myRequest = NULL;
 
 using json = nlohmann::json;
 
-//s_TokenType = authenticationResult.GetTokenType();
-//s_AccessToken = authenticationResult.GetAccessToken();
-//s_IDToken = authenticationResult.GetIdToken();
-//s_RefreshToken = authenticationResult.GetRefreshToken();
-
-string WriteJSONElement(const std::string &name, const std::string &valueStr)
-{
-	string message = "\"" + name + "\":\"" + valueStr + "\"";
-}
-
-string WriteJSONElement(const std::string &name, float v)
-{
-	string message = "\"" + name + "\":" + to_string(v) + "";
-}
-
-string WriteJSONElement(const std::string &name, int v)
-{
-	string message = "\"" + name + "\":" + to_string(v) + "";
-}
-
-struct MapJSON
+struct MapEntry
 {
 	string name;
+	string creatorName;
+	//int id;
+	//json jsonObj;
 
-	bool Read(const char *buf)
+	MapEntry()
 	{
-		int ind = 0;
-		char curr;
-		//name = "";
+
 	}
-	string GetString()
+
+	void Set(const json &j)
 	{
-		string message = "{" + WriteJSONElement("name", name) + "}";
-		return message;
+		name = j["name"];
+		creatorName = j["creatorName"];
+	}
+
+	MapEntry(const std::string &p_name, const std::string &p_creatorName)
+	{
+		//id = -1;
+		name = p_name;
+		creatorName = p_creatorName;
+	}
+
+	void AddToJSON()// bool withID = false )
+	{
+		json j;
+		/*if (withID)
+		{
+			j["id"] = id;
+		}*/
+		j["name"] = name;
+		j["creatorName"] = creatorName;
 	}
 };
-
 
 namespace Verb
 {
@@ -278,7 +286,7 @@ void UploadObject(const Aws::String &file)
 
 	if (outcome.IsSuccess())
 	{
-		cout << "upload sucess!" << endl;
+		cout << "upload " << file << " sucess!" << endl;
 	}
 	else
 	{
@@ -391,8 +399,6 @@ bool RequestMapUpload( const string &mapName )
 	}
 }
 
-
-
 bool RequestMapDeletion(const string &mapName)
 {
 	if (myConnection != NULL)
@@ -439,10 +445,6 @@ bool RequestMapDeletion(const string &mapName)
 	}
 }
 
-
-
-
-
 void RequestGetMapList()
 {
 	myRequest = OpenRequest(Verb::GET, L"/MapServer/rest/maps");
@@ -466,21 +468,19 @@ void RequestGetMapList()
 				cout << "return data:" << endl;
 				cout << data << endl;
 
-				auto j3 = json::parse(data);
-				cout << "jsn entries: " << j3.size() << endl;
-				for (int i = 0; i < j3.size(); ++i)
+				auto mapListJSON = json::parse(data);
+				std::vector<MapEntry> mapEntries;
+				int numEntries = mapListJSON.size();
+				mapEntries.resize(numEntries);
+				for (int i = 0; i < numEntries; ++i)
 				{
-					cout << j3[i] << endl;
+					mapEntries[i].Set(mapListJSON[i]);
 				}
 
-				cout << "test: " << endl;
-				cout << j3[3]["id"] << endl;
-				cout << j3[3]["creatorName"] << endl;
-				cout << j3[3]["name"] << endl;
-				//cout << "index 3: " << endl;
-				//cout << j3[]
-
-				
+				for (int i = 0; i < numEntries; ++i)
+				{
+					cout << "map: " << mapEntries[i].name << "   by: " << mapEntries[i].creatorName << endl;
+				}
 			}
 		}
 		else
@@ -634,15 +634,22 @@ void DownloadObject( const Aws::String &map )
 
 void CreateClients()
 {
-
-	//Aws::Client::ClientConfiguration clientConfiguration;
-	//clientConfiguration.region = Aws::Region::US_EAST_1;
-
 	Aws::Auth::CognitoCachingAnonymousCredentialsProvider *credentials = new Aws::Auth::CognitoCachingAnonymousCredentialsProvider(
 		"942521585968", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
 
+	if (s3Client == NULL)
+	{
+		s3Client = Aws::New<Aws::S3::S3Client>("s3client", credentials->GetAWSCredentials());
+	}
+	else
+	{
+		cout << "s3 client should be null here" << endl;
+	}
+
+	
+
+	//Aws::Delete(credentials);
 	//s3Client = Aws::New<Aws::S3::S3Client>("s3client", clientConfiguration);
-	s3Client = Aws::New<Aws::S3::S3Client>("s3client", credentials->GetAWSCredentials());
 }
 
 void RunBucketTest()
@@ -661,7 +668,6 @@ void TestSignIn()
 	Aws::String username = "test";
 	Aws::String password = "Shephard123~";
 
-
 	Aws::Http::HeaderValueCollection authParameters{
 		{ "USERNAME", username },
 		{ "PASSWORD", password }
@@ -671,7 +677,6 @@ void TestSignIn()
 	initiateAuthRequest.SetClientId(APP_CLIENT_ID);
 	initiateAuthRequest.SetAuthFlow(Aws::CognitoIdentityProvider::Model::AuthFlowType::USER_PASSWORD_AUTH);
 	initiateAuthRequest.SetAuthParameters(authParameters);
-
 	Aws::CognitoIdentityProvider::Model::InitiateAuthOutcome initiateAuthOutcome{ s_AmazonCognitoClient->InitiateAuth(initiateAuthRequest) };
 
 	if (initiateAuthOutcome.IsSuccess())
@@ -693,13 +698,75 @@ void TestSignIn()
 			cout << "\tID Token: " << authenticationResult.GetIdToken().substr(0, 20) << " ..." << endl;
 			cout << "\tRefresh Token: " << authenticationResult.GetRefreshToken().substr(0, 20) << " ..." << endl;
 
-			string accessToken = authenticationResult.GetAccessToken().c_str();
+			//authenticationResult.
+			//string accessToken = authenticationResult.GetAccessToken().c_str();
 			//SendTokenToServer(accessToken);
 			s_IsLoggedIn = true;
 			s_TokenType = authenticationResult.GetTokenType().c_str();
 			s_AccessToken = authenticationResult.GetAccessToken().c_str();
 			s_IDToken = authenticationResult.GetIdToken().c_str();
 			s_RefreshToken = authenticationResult.GetRefreshToken().c_str();
+
+			//"us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd_us-east-1_6v9AExXS8"
+			Aws::CognitoIdentity::Model::GetIdRequest idreq;
+
+			
+
+			idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());
+			idreq.SetAccountId("942521585968");
+			idreq.SetIdentityPoolId("us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
+
+			auto getidoutcome = s_c->GetId(idreq);
+			Aws::String identityID;
+			if (getidoutcome.IsSuccess())
+			{
+				auto idresult = getidoutcome.GetResult();
+				identityID = idresult.GetIdentityId();
+			}
+			else
+			{
+				cout << "GET ID OUTCOME FAILED" << endl;
+			}
+
+
+			Aws::CognitoIdentity::Model::GetCredentialsForIdentityRequest cred_request;
+
+			//Aws::Map<Aws::String, Aws::String> logins;
+
+			//logins["us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd_us-east-1_6v9AExXS8"] = s_IDToken.c_str();
+			//logins["cognito-idp.eu-west-1.amazonaws.com/eu-west-1_USERPOOL"] = TOKEN
+
+			cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
+			cred_request.SetIdentityId(identityID);
+			//cred_request.SetIdentityId(s_c->GetId();
+			//cred_request.SetLogins(logins);
+			//cred_request.SetIdentityId(IDENTITY);
+			//authenticationResult.
+			
+			//auto cred_request_response = s_AmazonCognitoClient->(cred_request);
+			//new Aws::CognitoIdentityProvider::provder
+			////auto prov = new Auth
+
+			//auto persistentProvider = Aws::MakeShared<Aws::Auth::PersistentCognitoIdentityProvider_JsonFileImpl>(
+			//	"blah", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd","942521585968");
+			//persistentProvider->
+			//
+			//Aws::Auth::CognitoCachingAuthenticatedCredentialsProvider prov(persistentProvider);
+
+			//if (s3Client != NULL)
+			//{
+			//	Aws::Delete(s3Client);
+			//}
+			//Aws::CognitoIdentity::CognitoIdentityClient c( new Aws::Auth::AnonymousAWSCredentialsProvider;
+			auto response = s_c->GetCredentialsForIdentity(cred_request);
+
+			auto temp = response.GetResultWithOwnership().GetCredentials();
+			Aws::Auth::AWSCredentials creds(temp.GetAccessKeyId(), temp.GetSecretKey(), temp.GetSessionToken());
+			//auto creds = response.getresult
+			s3Client = Aws::New<Aws::S3::S3Client>("s3client", creds);
+
+			UploadObject("gateblank8.brknk");
+			cout << "here now" << endl;
 
 			//if (!SendAccessTokenToServer(s_AccessToken))
 			//{
@@ -744,6 +811,8 @@ void RunCognitoTest()
 	//auto cog = new Aws::CognitoIdentity::CognitoIdentityClient(credentials->GetAWSCredentials(), clientConfiguration);
 	s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
 		CognitoIdentityProviderClient>("CognitoIdentityProviderClient", anonCred->GetAWSCredentials(), clientConfiguration);
+
+	s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", anonCred->GetAWSCredentials(), clientConfiguration);
 	
 	TestSignIn();
 
