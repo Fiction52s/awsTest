@@ -356,7 +356,25 @@ void GetMapList()
 				string headerResponse;
 				wstring wideHeaderReponse;
 
-				WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_STATUS_CODE,
+				DWORD statusCode = 0;
+				DWORD statusCodeSize = sizeof(DWORD);
+
+				
+				//get the status code
+				if (!WinHttpQueryHeaders(myRequest,
+					WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+					WINHTTP_HEADER_NAME_BY_INDEX,
+					&statusCode, &statusCodeSize,
+					WINHTTP_NO_HEADER_INDEX))
+				{
+					cout << "Error: " << HRESULT_FROM_WIN32(::GetLastError()) << endl;
+				}
+				else
+				{
+					cout << "status code: " << statusCode << endl;
+				}
+
+				WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
 					WINHTTP_HEADER_NAME_BY_INDEX, NULL,
 					&dwSize, WINHTTP_NO_HEADER_INDEX);
 
@@ -367,26 +385,7 @@ void GetMapList()
 
 					// Now, use WinHttpQueryHeaders to retrieve the header.
 					bResults = WinHttpQueryHeaders(myRequest,
-						WINHTTP_QUERY_STATUS_CODE, //| WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_FLAG_NUMBER | WINHTTP_QUERY_RAW_HEADERS_CRLF,
-						WINHTTP_HEADER_NAME_BY_INDEX,
-						lpOutBuffer, &dwSize,
-						WINHTTP_NO_HEADER_INDEX);
-
-					if (bResults)
-						printf("status: %S", lpOutBuffer);
-
-					delete[] lpOutBuffer;
-					lpOutBuffer = NULL;
-
-
-					WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
-						WINHTTP_HEADER_NAME_BY_INDEX, NULL,
-						&dwSize, WINHTTP_NO_HEADER_INDEX);
-
-					lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
-
-					bResults = WinHttpQueryHeaders(myRequest,
-						WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_FLAG_NUMBER | WINHTTP_QUERY_RAW_HEADERS_CRLF,
+						WINHTTP_QUERY_RAW_HEADERS_CRLF,
 						WINHTTP_HEADER_NAME_BY_INDEX,
 						lpOutBuffer, &dwSize,
 						WINHTTP_NO_HEADER_INDEX);
