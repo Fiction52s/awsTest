@@ -39,7 +39,7 @@ Aws::S3::S3Client *s3Client;
 
 const char bucketName[] = "breakneckmapbucketeast";
 
-static Aws::String mapName;
+static Aws::String mName;
 
 static std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
 static bool s_IsLoggedIn = false;
@@ -193,6 +193,56 @@ bool RequestMapUpload( const string &mapName )
 		else
 		{
 			bResults = WinHttpReceiveResponse(myRequest, NULL);
+
+			if (bResults)
+			{
+				DWORD dwSize = 0;
+				DWORD dwDownloaded = 0;
+				LPSTR pszOutBuffer;
+				string response;
+				do
+				{
+
+					// Check for available data.
+					dwSize = 0;
+					if (!WinHttpQueryDataAvailable(myRequest, &dwSize))
+						printf("Error %u in WinHttpQueryDataAvailable.\n",
+							GetLastError());
+
+					if (!dwSize)
+					{
+						cout << "no more" << endl;
+						break;
+					}
+
+					// Allocate space for the buffer.
+					pszOutBuffer = new char[dwSize + 1];
+					if (!pszOutBuffer)
+					{
+						printf("Out of memory\n");
+						dwSize = 0;
+					}
+					else
+					{
+						// Read the data.
+						ZeroMemory(pszOutBuffer, dwSize + 1);
+
+						if (!WinHttpReadData(myRequest, (LPVOID)pszOutBuffer,
+							dwSize, &dwDownloaded))
+							printf("Error %u in WinHttpReadData.\n", GetLastError());
+						else
+						{
+							printf("%s", pszOutBuffer);
+							response = response + string(pszOutBuffer);
+						}
+							
+						// Free the memory allocated to the buffer.
+						delete[] pszOutBuffer;
+					}
+				} while (dwSize > 0);
+
+				cout << "HTTP RESPONSE FROM POST:" << response << endl;
+			}
 		}
 
 		WinHttpCloseHandle(myRequest);
@@ -268,27 +318,130 @@ void GetMapList()
 		wstring wideSessionHeader = wstring(sessionHeader.begin(), sessionHeader.end());
 		LPCWSTR wsh = wideSessionHeader.c_str();
 
-		BOOL bResults = WinHttpAddRequestHeaders(myRequest, L"Content-Type:application/json", -1, WINHTTP_ADDREQ_FLAG_ADD);
-		BOOL bResults1 = WinHttpAddRequestHeaders(myRequest, wsh, -1, WINHTTP_ADDREQ_FLAG_ADD);
+		//BOOL bResults = WinHttpAddRequestHeaders(myRequest, L"Content-Type:application/json", -1, WINHTTP_ADDREQ_FLAG_ADD);
+		//BOOL bResults1 = WinHttpAddRequestHeaders(myRequest, wsh, -1, WINHTTP_ADDREQ_FLAG_ADD);
 
-		if (!bResults || !bResults1)
+		/*if (!bResults || !bResults1)
 		{
 			cout << "failed to add a header" << endl;
-		}
+		}*/
 
+		/*string mname = mName.c_str();
 		string message = "{"
-			"\"name\":\"" + mapName + "\""
+			"\"name\":\"" + mname + "\""
 			"}";
-		const LPSTR messageBuf = (LPTSTR)message.c_str();
+		const LPSTR messageBuf = (LPTSTR)message.c_str();*/
 
 		// Send a request.
 
-		bResults = WinHttpSendRequest(myRequest,
-			WINHTTP_NO_ADDITIONAL_HEADERS, 0, messageBuf, strlen(messageBuf), strlen(messageBuf), 0);
+		BOOL bResults = WinHttpSendRequest(myRequest,
+			WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0,
+			0, 0);
 
 		if (!bResults)
 		{
-			cout << "sending create map request failed" << endl;
+			cout << "sending get request failed" << endl;
+		}
+		else
+		{
+			bResults = WinHttpReceiveResponse(myRequest, NULL);
+
+			if (bResults)
+			{
+				DWORD dwSize = 0;
+				DWORD dwDownloaded = 0;
+				LPSTR pszOutBuffer;
+				string response;
+				LPVOID lpOutBuffer = NULL;
+				string headerResponse;
+				wstring wideHeaderReponse;
+
+				WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_STATUS_CODE,
+					WINHTTP_HEADER_NAME_BY_INDEX, NULL,
+					&dwSize, WINHTTP_NO_HEADER_INDEX);
+
+				// Allocate memory for the buffer.
+				if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+				{
+					lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
+
+					// Now, use WinHttpQueryHeaders to retrieve the header.
+					bResults = WinHttpQueryHeaders(myRequest,
+						WINHTTP_QUERY_STATUS_CODE, //| WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_FLAG_NUMBER | WINHTTP_QUERY_RAW_HEADERS_CRLF,
+						WINHTTP_HEADER_NAME_BY_INDEX,
+						lpOutBuffer, &dwSize,
+						WINHTTP_NO_HEADER_INDEX);
+
+					if (bResults)
+						printf("status: %S", lpOutBuffer);
+
+					delete[] lpOutBuffer;
+					lpOutBuffer = NULL;
+
+
+					WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
+						WINHTTP_HEADER_NAME_BY_INDEX, NULL,
+						&dwSize, WINHTTP_NO_HEADER_INDEX);
+
+					lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
+
+					bResults = WinHttpQueryHeaders(myRequest,
+						WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_RAW_HEADERS_CRLF, //| WINHTTP_QUERY_FLAG_NUMBER | WINHTTP_QUERY_RAW_HEADERS_CRLF,
+						WINHTTP_HEADER_NAME_BY_INDEX,
+						lpOutBuffer, &dwSize,
+						WINHTTP_NO_HEADER_INDEX);
+
+					if (bResults)
+						printf("Header contents: \n%S", lpOutBuffer);
+
+					delete[] lpOutBuffer;
+				}
+
+
+
+				do
+				{
+
+					// Check for available data.
+					dwSize = 0;
+					if (!WinHttpQueryDataAvailable(myRequest, &dwSize))
+						printf("Error %u in WinHttpQueryDataAvailable.\n",
+							GetLastError());
+
+					if (!dwSize)
+					{
+						cout << "\nno more" << endl;
+						break;
+					}
+
+					// Allocate space for the buffer.
+					pszOutBuffer = new char[dwSize + 1];
+					if (!pszOutBuffer)
+					{
+						printf("Out of memory\n");
+						dwSize = 0;
+					}
+					else
+					{
+						// Read the data.
+						ZeroMemory(pszOutBuffer, dwSize + 1);
+
+						if (!WinHttpReadData(myRequest, (LPVOID)pszOutBuffer,
+							dwSize, &dwDownloaded))
+							printf("Error %u in WinHttpReadData.\n", GetLastError());
+						else
+						{
+							//printf("%s", pszOutBuffer);
+							response = response + string(pszOutBuffer);
+						}
+
+						// Free the memory allocated to the buffer.
+						delete[] pszOutBuffer;
+					}
+				} while (dwSize > 0);
+
+				cout << "HTTP RESPONSE FROM GET:" << response << endl;
+			}
 		}
 
 		WinHttpCloseHandle(myRequest);
@@ -300,164 +453,9 @@ void GetMapList()
 	}
 }
 
-void SendTokenToServer(const string & token)
-{
-	DWORD dwSize = 0;
-	DWORD dwDownloaded = 0;
-	LPSTR pszOutBuffer;
-	BOOL  bResults = FALSE;
-	HINTERNET  hSession = NULL,
-		hConnect = NULL,
-		hRequest = NULL;
-
-	// Use WinHttpOpen to obtain a session handle.
-	hSession = WinHttpOpen(L"WinHTTP Example/1.0",
-		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-		WINHTTP_NO_PROXY_NAME,
-		WINHTTP_NO_PROXY_BYPASS, 0);
-
-	// Specify an HTTP server.
-	/*if (hSession)
-	hConnect = WinHttpConnect(hSession, L"www.microsoft.com",
-	INTERNET_DEFAULT_HTTPS_PORT, 0);*/
-
-	/*if (hSession)
-		hConnect = WinHttpConnect(hSession, L"please.eba-gkrhenjs.us-west-2.elasticbeanstalk.com",
-			INTERNET_DEFAULT_HTTP_PORT, 0);*/
-
-	if (hSession)
-		hConnect = WinHttpConnect(hSession, L"localhost",
-		8080, 0);
-	//INTERNET_DEFAULT_HTTPS_PORT, 0);
-
-	// Create an HTTP request handle.
-	if (hConnect)
-		hRequest = WinHttpOpenRequest(hConnect, L"POST", L"/MapServer/rest/maps",
-			NULL, WINHTTP_NO_REFERER,
-			WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-
-	string sessionHeaderName = "Session-Token:";
-	string sessionHeader = sessionHeaderName + token;
-	wstring wideSessionHeader = wstring(sessionHeader.begin(), sessionHeader.end());
-	LPCWSTR wsh = wideSessionHeader.c_str();
-
-	//string mapNameHeaderName = "Map-Name:";
-	string mapName = "gateblank8";
-	string mapFile = mapName + ".brknk";
-	//string mapNameHeader = mapNameHeaderName + mapName;
-	//wstring wideMapNameHeader = wstring(mapNameHeader.begin(), mapNameHeader.end());
-	//LPCWSTR wmnh = wideMapNameHeader.c_str();
-
-	//LPCWSTR test = L"Session-Token:cmon";
-
-	if (hRequest)
-	{
-		BOOL bResults = WinHttpAddRequestHeaders(hRequest, L"Content-Type:application/json", -1, WINHTTP_ADDREQ_FLAG_ADD);
-		//BOOL bResults = WinHttpAddRequestHeaders(hRequest, L"Content-Type:text/plain", -1, WINHTTP_ADDREQ_FLAG_ADD);
-		BOOL bResults1 = WinHttpAddRequestHeaders(hRequest, wsh, -1, WINHTTP_ADDREQ_FLAG_ADD);
-
-		if (bResults1)
-		{
-			cout << "successfully added session token header" << endl;
-		}
-		else
-		{
-			cout << "failed to add session token header" << endl;
-		}
-		/*BOOL bResults2 = WinHttpAddRequestHeaders(hRequest, wmnh, -1, WINHTTP_ADDREQ_FLAG_ADD);
-		if (bResults2)
-		{
-			cout << "successfully added map name header" << endl;
-		}
-		else
-		{
-			cout << "failed to add map name header" << endl;
-		}*/
-	}
-	
-
-	/*ifstream is;
-	is.open(mapFile);
-	assert(is.is_open());
-	string mapFileContent((std::istreambuf_iterator<char>(is)),
-		(std::istreambuf_iterator<char>()));
-
-	const LPSTR mapFileContentLPSTR = (LPSTR)mapFileContent.c_str();*/
-
-
-	//WINHTTP_FLAG_SECURE);
-
-	/*if (hRequest)
-	{
-		BOOL bResults = WinHttpAddRequestHeaders( hRequest, L"content-type:application/json", -1,)
-	}*/
-
-	string message = "{"
-		"\"name\":\"" + mapName + "\""
-		"}";
-
-
-	const LPSTR messageBuf = (LPTSTR)message.c_str();
-		
-	// Send a request.
-	if (hRequest)
-		bResults = WinHttpSendRequest(hRequest,
-			WINHTTP_NO_ADDITIONAL_HEADERS, 0, messageBuf, strlen(messageBuf), strlen(messageBuf), 0);
-
-
-	// End the request.
-	if (bResults)
-		bResults = WinHttpReceiveResponse(hRequest, NULL);
-
-	// Keep checking for data until there is nothing left.
-	if (bResults)
-	{
-		do
-		{
-			// Check for available data.
-			dwSize = 0;
-			if (!WinHttpQueryDataAvailable(hRequest, &dwSize))
-				printf("Error %u in WinHttpQueryDataAvailable.\n",
-					GetLastError());
-
-			// Allocate space for the buffer.
-			pszOutBuffer = new char[dwSize + 1];
-			if (!pszOutBuffer)
-			{
-				printf("Out of memory\n");
-				dwSize = 0;
-			}
-			else
-			{
-				// Read the data.
-				ZeroMemory(pszOutBuffer, dwSize + 1);
-
-				if (!WinHttpReadData(hRequest, (LPVOID)pszOutBuffer,
-					dwSize, &dwDownloaded))
-					printf("Error %u in WinHttpReadData.\n", GetLastError());
-				else
-					printf("%s", pszOutBuffer);
-
-				// Free the memory allocated to the buffer.
-				delete[] pszOutBuffer;
-			}
-		} while (dwSize > 0);
-	}
-
-
-	// Report any errors.
-	if (!bResults)
-		printf("Error %d has occurred.\n", GetLastError());
-
-	// Close any open handles.
-	if (hRequest) WinHttpCloseHandle(hRequest);
-	if (hConnect) WinHttpCloseHandle(hConnect);
-	if (hSession) WinHttpCloseHandle(hSession);
-}
-
 void DeleteObject(const Aws::String &map)
 {
-	mapName = map;
+	mName = map;
 	cout << "destroying" << endl;
 
 	Aws::S3::Model::DeleteObjectRequest delReq;
@@ -481,12 +479,12 @@ void DeleteObject(const Aws::String &map)
 
 void DownloadObject( const Aws::String &map )
 {
-	mapName = map;
+	mName = map;
 	cout << "downloading: " << map << endl;
 	Aws::S3::Model::GetObjectRequest getReq;
 	getReq.WithBucket(bucketName);
 	getReq.WithKey(map);//"gateblank9.brknk");
-	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", mapName.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
+	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", mName.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
 
 	auto outcome = s3Client->GetObject(getReq);
 
@@ -620,7 +618,9 @@ void RunCognitoTest()
 	if (s_IsLoggedIn)
 	{
 		ConnectToServer();
-		bool uploadRequestResult = RequestMapDeletion("gateblank6");//RequestMapUpload("gateblank6");
+		//bool uploadRequestResult = RequestMapDeletion("gateblank6");//RequestMapUpload("gateblank6");
+		//bool uploadRequestResult = RequestMapUpload("gateblank2");
+		GetMapList();
 		CleanupServerConnection();
 	}
 	/*Aws::CognitoIdentityProvider::Model::ChangePasswordRequest changePasswordRequest;
