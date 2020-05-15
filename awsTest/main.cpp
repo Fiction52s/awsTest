@@ -539,9 +539,9 @@ void RequestGetMapList()
 
 void RemoveObject(const Aws::String &file)
 {
-	cout << "removing " << file << "from server" << endl;
-
 	Aws::String bucketFilePath = Aws::String(username.c_str()) + "/" + file;
+
+	cout << "removing " << bucketFilePath << " from server" << endl;
 
 	Aws::S3::Model::DeleteObjectRequest delReq;
 	delReq.WithBucket(bucketName);
@@ -803,7 +803,7 @@ void RunCognitoTest()
 
 		RequestGetMapList();
 
-		MapEntry &currEntry = mapEntries[1];
+		MapEntry &currEntry = mapEntries[0];
 
 		if (RequestMapDeletion(currEntry.id))
 		{
