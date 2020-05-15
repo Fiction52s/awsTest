@@ -25,11 +25,15 @@
 #include <Windows.h>
 #include <winhttp.h>
 
-#include "ClientID.h"
-
 #undef GetObject
 #undef GetMessage
 #undef DELETE
+
+#include "ClientID.h"
+
+#include "nlohmann\json.hpp"
+
+
 
 
 using namespace std;
@@ -59,10 +63,44 @@ HINTERNET myConnection = NULL;
 HINTERNET mySession = NULL;
 HINTERNET myRequest = NULL;
 
+using json = nlohmann::json;
+
 //s_TokenType = authenticationResult.GetTokenType();
 //s_AccessToken = authenticationResult.GetAccessToken();
 //s_IDToken = authenticationResult.GetIdToken();
 //s_RefreshToken = authenticationResult.GetRefreshToken();
+
+string WriteJSONElement(const std::string &name, const std::string &valueStr)
+{
+	string message = "\"" + name + "\":\"" + valueStr + "\"";
+}
+
+string WriteJSONElement(const std::string &name, float v)
+{
+	string message = "\"" + name + "\":" + to_string(v) + "";
+}
+
+string WriteJSONElement(const std::string &name, int v)
+{
+	string message = "\"" + name + "\":" + to_string(v) + "";
+}
+
+struct MapJSON
+{
+	string name;
+
+	bool Read(const char *buf)
+	{
+		int ind = 0;
+		char curr;
+		//name = "";
+	}
+	string GetString()
+	{
+		string message = "{" + WriteJSONElement("name", name) + "}";
+		return message;
+	}
+};
 
 
 namespace Verb
@@ -102,7 +140,7 @@ DWORD GetRequestStatusCode()
 	}
 	else
 	{
-		cout << "status code: " << statusCode << endl;
+		//cout << "status code: " << statusCode << endl;
 		return statusCode;
 	}
 }
@@ -110,7 +148,7 @@ DWORD GetRequestStatusCode()
 string GetRequestData()
 {
 	DWORD dwSize = 0;
-	LPSTR pszOutBuffer;
+	LPSTR pszOutBuffer = NULL;
 	DWORD dwDownloaded = 0;
 	string response;
 
@@ -163,7 +201,7 @@ string GetRequestData()
 string GetRequestHeaders()
 {
 	DWORD dwSize = 0;
-	LPVOID lpOutBuffer = NULL;
+	LPCWSTR lpOutBuffer = NULL;
 	BOOL bResults;
 	string result;
 
@@ -180,12 +218,13 @@ string GetRequestHeaders()
 		bResults = WinHttpQueryHeaders(myRequest,
 			WINHTTP_QUERY_RAW_HEADERS_CRLF,
 			WINHTTP_HEADER_NAME_BY_INDEX,
-			lpOutBuffer, &dwSize,
+			(LPVOID)lpOutBuffer, &dwSize,
 			WINHTTP_NO_HEADER_INDEX);
 
 		if (bResults)
 		{
-			result = (char*)lpOutBuffer;
+			wstring wideBufferStr(lpOutBuffer);
+			result = string(wideBufferStr.begin(), wideBufferStr.end());
 		}
 
 		//printf("Header contents: \n%S", lpOutBuffer);
@@ -299,6 +338,13 @@ bool SendRequestWithMessage(const std::string &message)
 	return WinHttpSendRequest(myRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, messageBuf, strlen(messageBuf), strlen(messageBuf), 0);
 }
 
+bool SendRequest()
+{
+	return WinHttpSendRequest(myRequest,
+		WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0,
+		0, 0);
+}
+
 bool RequestMapUpload( const string &mapName )
 {
 	myRequest = OpenRequest(Verb::POST, L"/MapServer/rest/maps");
@@ -320,6 +366,12 @@ bool RequestMapUpload( const string &mapName )
 				string headers = GetRequestHeaders();
 				string data = GetRequestData();
 
+				cout << "status code: " << statusCode << endl;
+				cout << "headers: " << endl;
+				cout << headers << endl;
+
+				cout << "return data:" << endl;
+				cout << data << endl;
 				//process POST result here to see if its okay to upload
 			}
 		}
@@ -391,109 +443,138 @@ bool RequestMapDeletion(const string &mapName)
 
 
 
-void GetMapList()
+void RequestGetMapList()
 {
 	myRequest = OpenRequest(Verb::GET, L"/MapServer/rest/maps");
 
 	if (myRequest != NULL)
 	{
-		
-		string sessionHeader = sessionHeaderName + s_AccessToken;
-		wstring wideSessionHeader = wstring(sessionHeader.begin(), sessionHeader.end());
-		LPCWSTR wsh = wideSessionHeader.c_str();
+		AddHeaderSessionToken();
 
-		BOOL bResults = WinHttpSendRequest(myRequest,
-			WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0,
-			0, 0);
-
-		if (!bResults)
+		if (SendRequest())
 		{
-			cout << "sending get request failed" << endl;
+			if (WinHttpReceiveResponse(myRequest, NULL))
+			{
+				int statusCode = GetRequestStatusCode();
+				string headers = GetRequestHeaders();
+				string data = GetRequestData();
+
+				cout << "status code: " << statusCode << endl;
+				cout << "headers: " << endl;
+				cout << headers << endl;
+
+				cout << "return data:" << endl;
+				cout << data << endl;
+
+				auto j3 = json::parse(data);
+				cout << "jsn entries: " << j3.size() << endl;
+				for (int i = 0; i < j3.size(); ++i)
+				{
+					cout << j3[i] << endl;
+				}
+
+				cout << "test: " << endl;
+				cout << j3[3]["id"] << endl;
+				cout << j3[3]["creatorName"] << endl;
+				cout << j3[3]["name"] << endl;
+				//cout << "index 3: " << endl;
+				//cout << j3[]
+
+				
+			}
 		}
 		else
 		{
-			bResults = WinHttpReceiveResponse(myRequest, NULL);
-
-			if (bResults)
-			{
-				DWORD dwSize = 0;
-				DWORD dwDownloaded = 0;
-				LPSTR pszOutBuffer;
-				string response;
-				LPVOID lpOutBuffer = NULL;
-				string headerResponse;
-				wstring wideHeaderReponse;
-
-				int statusCode = GetRequestStatusCode();
-
-				WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
-					WINHTTP_HEADER_NAME_BY_INDEX, NULL,
-					&dwSize, WINHTTP_NO_HEADER_INDEX);
-
-				// Allocate memory for the buffer.
-				if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-				{
-					lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
-
-					// Now, use WinHttpQueryHeaders to retrieve the header.
-					bResults = WinHttpQueryHeaders(myRequest,
-						WINHTTP_QUERY_RAW_HEADERS_CRLF,
-						WINHTTP_HEADER_NAME_BY_INDEX,
-						lpOutBuffer, &dwSize,
-						WINHTTP_NO_HEADER_INDEX);
-
-					if (bResults)
-						printf("Header contents: \n%S", lpOutBuffer);
-
-					delete[] lpOutBuffer;
-				}
-
-
-
-				do
-				{
-
-					// Check for available data.
-					dwSize = 0;
-					if (!WinHttpQueryDataAvailable(myRequest, &dwSize))
-						printf("Error %u in WinHttpQueryDataAvailable.\n",
-							GetLastError());
-
-					if (!dwSize)
-					{
-						cout << "\nno more" << endl;
-						break;
-					}
-
-					// Allocate space for the buffer.
-					pszOutBuffer = new char[dwSize + 1];
-					if (!pszOutBuffer)
-					{
-						printf("Out of memory\n");
-						dwSize = 0;
-					}
-					else
-					{
-						// Read the data.
-						ZeroMemory(pszOutBuffer, dwSize + 1);
-
-						if (!WinHttpReadData(myRequest, (LPVOID)pszOutBuffer,
-							dwSize, &dwDownloaded))
-							printf("Error %u in WinHttpReadData.\n", GetLastError());
-						else
-						{
-							//printf("%s", pszOutBuffer);
-							response = response + string(pszOutBuffer);
-						}
-
-						// Free the memory allocated to the buffer.
-						delete[] pszOutBuffer;
-					}
-				} while (dwSize > 0);
-
-				cout << "HTTP RESPONSE FROM GET:" << response << endl;
-			}
+			cout << "sending get request failed" << endl;
 		}
+		//if (!bResults)
+		//{
+		//	
+		//}
+		//else
+		//{
+		//	bResults = WinHttpReceiveResponse(myRequest, NULL);
+
+		//	if (bResults)
+		//	{
+		//		DWORD dwSize = 0;
+		//		DWORD dwDownloaded = 0;
+		//		LPSTR pszOutBuffer;
+		//		string response;
+		//		LPVOID lpOutBuffer = NULL;
+		//		string headerResponse;
+		//		wstring wideHeaderReponse;
+
+		//		int statusCode = GetRequestStatusCode();
+
+		//		WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
+		//			WINHTTP_HEADER_NAME_BY_INDEX, NULL,
+		//			&dwSize, WINHTTP_NO_HEADER_INDEX);
+
+		//		// Allocate memory for the buffer.
+		//		if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+		//		{
+		//			lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
+
+		//			// Now, use WinHttpQueryHeaders to retrieve the header.
+		//			bResults = WinHttpQueryHeaders(myRequest,
+		//				WINHTTP_QUERY_RAW_HEADERS_CRLF,
+		//				WINHTTP_HEADER_NAME_BY_INDEX,
+		//				lpOutBuffer, &dwSize,
+		//				WINHTTP_NO_HEADER_INDEX);
+
+		//			if (bResults)
+		//				printf("Header contents: \n%S", lpOutBuffer);
+
+		//			delete[] lpOutBuffer;
+		//		}
+
+
+
+		//		do
+		//		{
+
+		//			// Check for available data.
+		//			dwSize = 0;
+		//			if (!WinHttpQueryDataAvailable(myRequest, &dwSize))
+		//				printf("Error %u in WinHttpQueryDataAvailable.\n",
+		//					GetLastError());
+
+		//			if (!dwSize)
+		//			{
+		//				cout << "\nno more" << endl;
+		//				break;
+		//			}
+
+		//			// Allocate space for the buffer.
+		//			pszOutBuffer = new char[dwSize + 1];
+		//			if (!pszOutBuffer)
+		//			{
+		//				printf("Out of memory\n");
+		//				dwSize = 0;
+		//			}
+		//			else
+		//			{
+		//				// Read the data.
+		//				ZeroMemory(pszOutBuffer, dwSize + 1);
+
+		//				if (!WinHttpReadData(myRequest, (LPVOID)pszOutBuffer,
+		//					dwSize, &dwDownloaded))
+		//					printf("Error %u in WinHttpReadData.\n", GetLastError());
+		//				else
+		//				{
+		//					//printf("%s", pszOutBuffer);
+		//					response = response + string(pszOutBuffer);
+		//				}
+
+		//				// Free the memory allocated to the buffer.
+		//				delete[] pszOutBuffer;
+		//			}
+		//		} while (dwSize > 0);
+
+		//		cout << "HTTP RESPONSE FROM GET:" << response << endl;
+		//	}
+		//}
 
 		WinHttpCloseHandle(myRequest);
 		myRequest = NULL;
@@ -670,8 +751,8 @@ void RunCognitoTest()
 	{
 		ConnectToServer();
 		//bool uploadRequestResult = RequestMapDeletion("gateblank6");//RequestMapUpload("gateblank6");
-		bool uploadRequestResult = RequestMapUpload("gateblank1");
-		//GetMapList();
+		//bool uploadRequestResult = RequestMapUpload("gateblank4");
+		RequestGetMapList();
 
 		CleanupServerConnection();
 	}
