@@ -14,3 +14,4 @@ awsTest/ClientID.h
 *.ilk
 *.iobj
 *.ipdb
+*.brknk

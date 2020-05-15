@@ -56,6 +56,7 @@ const char bucketName[] = "breakneckmaps";
 
 static Aws::String mName;
 
+
 static std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
 static std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> s_c;
 static bool s_IsLoggedIn = false;
@@ -65,6 +66,7 @@ static string s_IDToken;
 static string s_RefreshToken;
 static string sessionHeaderName = "Session-Token:";
 static LPCWSTR ContentType_JSON = L"Content-Type:application/json";
+static string username;
 
 //static Aws::CognitoIdentityProvider::Model::AuthenticationResultType authResult;
 static bool loggedIn = false;
@@ -76,9 +78,10 @@ using json = nlohmann::json;
 
 struct MapEntry
 {
+	int id;
 	string name;
 	string creatorName;
-	//int id;
+
 	//json jsonObj;
 
 	MapEntry()
@@ -88,28 +91,31 @@ struct MapEntry
 
 	void Set(const json &j)
 	{
+		id = j["id"];
 		name = j["name"];
 		creatorName = j["creatorName"];
 	}
 
-	MapEntry(const std::string &p_name, const std::string &p_creatorName)
-	{
-		//id = -1;
-		name = p_name;
-		creatorName = p_creatorName;
-	}
+	//MapEntry(const std::string &p_name, const std::string &p_creatorName)
+	//{
+	//	//id = -1;
+	//	name = p_name;
+	//	creatorName = p_creatorName;
+	//}
 
 	void AddToJSON()// bool withID = false )
 	{
 		json j;
 		/*if (withID)
 		{
-			j["id"] = id;
+		j["id"] = id;
 		}*/
+		j["id"] = id;
 		j["name"] = name;
 		j["creatorName"] = creatorName;
 	}
 };
+static std::vector<MapEntry> mapEntries;
 
 namespace Verb
 {
@@ -269,19 +275,27 @@ void ListObjects()
 	}
 }
 
-void UploadObject(const Aws::String &file)
+void UploadObject(const string &file)
 {
+	if (!s_IsLoggedIn)
+	{
+		cout << "tried to upload, but aren't logged in" << endl;
+		return;
+	}
+
 	//mapName = map;
 	cout << "uploading: " << file << endl;
 
+	string uploadPath = username + "/" + file;
+
 	Aws::S3::Model::PutObjectRequest putReq;
 	putReq.WithBucket(bucketName);
-	putReq.WithKey(file);
+	putReq.WithKey(uploadPath.c_str());
 
 	auto fileToUpload = Aws::MakeShared<Aws::FStream>("uploadstream", file.c_str(), std::ios_base::in | std::ios_base::binary);
 
 	putReq.SetBody(fileToUpload);
-
+	//putReq.SetKey("test/" + file);
 	auto outcome = s3Client->PutObject(putReq);
 
 	if (outcome.IsSuccess())
@@ -380,6 +394,18 @@ bool RequestMapUpload( const string &mapName )
 
 				cout << "return data:" << endl;
 				cout << data << endl;
+
+				if (statusCode == 200)
+				{
+					cout << "you are allowed to upload the map." << endl;
+					//string fullPath = username + "/" + mapName;
+					//Aws::String awsFullPath(fullPath.c_str());
+					return true;
+				}
+				else if (statusCode == 304) //not modified for now
+				{
+					cout << "you aren't allowed to upload the map. It either already exists or the name is invalid." << endl;
+				}
 				//process POST result here to see if its okay to upload
 			}
 		}
@@ -390,13 +416,14 @@ bool RequestMapUpload( const string &mapName )
 
 		WinHttpCloseHandle(myRequest);
 		myRequest = NULL;
-
-		return true;
 	}
 	else
 	{
 		cout << "failed to create request" << endl;
+		return false;
 	}
+
+	return false;
 }
 
 bool RequestMapDeletion(const string &mapName)
@@ -445,13 +472,58 @@ bool RequestMapDeletion(const string &mapName)
 	}
 }
 
+bool RequestMapDownload( int id )
+{
+	wstring path = L"/MapServer/rest/maps/" + to_wstring(id);
+	myRequest = OpenRequest(Verb::GET, path.c_str());
+
+	bool found = false;
+
+	if (myRequest != NULL)
+	{
+		if (SendRequest())
+		{
+			if (WinHttpReceiveResponse(myRequest, NULL))
+			{
+				int statusCode = GetRequestStatusCode();
+				if (statusCode == 200)
+				{
+					cout << "map exists. you can download it." << endl;
+					found = true;
+				}
+				else if (statusCode == 404)
+				{
+					cout << "map doesn't exist. you can't download it." << endl;
+				}
+				else
+				{
+					cout << "error checking for map existence. status code: " << statusCode << endl;
+				}
+			}
+		}
+		else
+		{
+			cout << "sending get request failed" << endl;
+		}
+
+		WinHttpCloseHandle(myRequest);
+		myRequest = NULL;
+	}
+	else
+	{
+		cout << "failed to create request" << endl;
+	}
+
+	return found;
+}
+
 void RequestGetMapList()
 {
 	myRequest = OpenRequest(Verb::GET, L"/MapServer/rest/maps");
 
 	if (myRequest != NULL)
 	{
-		AddHeaderSessionToken();
+		//AddHeaderSessionToken();
 
 		if (SendRequest())
 		{
@@ -469,7 +541,7 @@ void RequestGetMapList()
 				cout << data << endl;
 
 				auto mapListJSON = json::parse(data);
-				std::vector<MapEntry> mapEntries;
+				//std::vector<MapEntry> mapEntries;
 				int numEntries = mapListJSON.size();
 				mapEntries.resize(numEntries);
 				for (int i = 0; i < numEntries; ++i)
@@ -487,95 +559,7 @@ void RequestGetMapList()
 		{
 			cout << "sending get request failed" << endl;
 		}
-		//if (!bResults)
-		//{
-		//	
-		//}
-		//else
-		//{
-		//	bResults = WinHttpReceiveResponse(myRequest, NULL);
-
-		//	if (bResults)
-		//	{
-		//		DWORD dwSize = 0;
-		//		DWORD dwDownloaded = 0;
-		//		LPSTR pszOutBuffer;
-		//		string response;
-		//		LPVOID lpOutBuffer = NULL;
-		//		string headerResponse;
-		//		wstring wideHeaderReponse;
-
-		//		int statusCode = GetRequestStatusCode();
-
-		//		WinHttpQueryHeaders(myRequest, WINHTTP_QUERY_RAW_HEADERS_CRLF,
-		//			WINHTTP_HEADER_NAME_BY_INDEX, NULL,
-		//			&dwSize, WINHTTP_NO_HEADER_INDEX);
-
-		//		// Allocate memory for the buffer.
-		//		if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-		//		{
-		//			lpOutBuffer = new WCHAR[dwSize / sizeof(WCHAR)];
-
-		//			// Now, use WinHttpQueryHeaders to retrieve the header.
-		//			bResults = WinHttpQueryHeaders(myRequest,
-		//				WINHTTP_QUERY_RAW_HEADERS_CRLF,
-		//				WINHTTP_HEADER_NAME_BY_INDEX,
-		//				lpOutBuffer, &dwSize,
-		//				WINHTTP_NO_HEADER_INDEX);
-
-		//			if (bResults)
-		//				printf("Header contents: \n%S", lpOutBuffer);
-
-		//			delete[] lpOutBuffer;
-		//		}
-
-
-
-		//		do
-		//		{
-
-		//			// Check for available data.
-		//			dwSize = 0;
-		//			if (!WinHttpQueryDataAvailable(myRequest, &dwSize))
-		//				printf("Error %u in WinHttpQueryDataAvailable.\n",
-		//					GetLastError());
-
-		//			if (!dwSize)
-		//			{
-		//				cout << "\nno more" << endl;
-		//				break;
-		//			}
-
-		//			// Allocate space for the buffer.
-		//			pszOutBuffer = new char[dwSize + 1];
-		//			if (!pszOutBuffer)
-		//			{
-		//				printf("Out of memory\n");
-		//				dwSize = 0;
-		//			}
-		//			else
-		//			{
-		//				// Read the data.
-		//				ZeroMemory(pszOutBuffer, dwSize + 1);
-
-		//				if (!WinHttpReadData(myRequest, (LPVOID)pszOutBuffer,
-		//					dwSize, &dwDownloaded))
-		//					printf("Error %u in WinHttpReadData.\n", GetLastError());
-		//				else
-		//				{
-		//					//printf("%s", pszOutBuffer);
-		//					response = response + string(pszOutBuffer);
-		//				}
-
-		//				// Free the memory allocated to the buffer.
-		//				delete[] pszOutBuffer;
-		//			}
-		//		} while (dwSize > 0);
-
-		//		cout << "HTTP RESPONSE FROM GET:" << response << endl;
-		//	}
-		//}
-
+		
 		WinHttpCloseHandle(myRequest);
 		myRequest = NULL;
 	}
@@ -609,13 +593,17 @@ void DeleteObject(const Aws::String &map)
 
 }
 
-void DownloadObject( const Aws::String &map )
+void DownloadObject( const Aws::String &path, const Aws::String &file )
 {
-	mName = map;
-	cout << "downloading: " << map << endl;
+	//assumes its a map
+	mName = "DownloadedMaps/" + file;
+	//mName = map;
+	cout << "downloading: " << file << endl;
+	Aws::String filePath = path + file;
+
 	Aws::S3::Model::GetObjectRequest getReq;
 	getReq.WithBucket(bucketName);
-	getReq.WithKey(map);//"gateblank9.brknk");
+	getReq.WithKey(filePath);//"gateblank9.brknk");
 	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", mName.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
 
 	auto outcome = s3Client->GetObject(getReq);
@@ -665,11 +653,11 @@ void RunBucketTest()
 
 void TestSignIn()
 {
-	Aws::String username = "test";
+	username = "test";
 	Aws::String password = "Shephard123~";
 
 	Aws::Http::HeaderValueCollection authParameters{
-		{ "USERNAME", username },
+		{ "USERNAME", username.c_str() },
 		{ "PASSWORD", password }
 	};
 
@@ -723,26 +711,7 @@ void TestSignIn()
 
 			cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
 			cred_request.SetIdentityId(identityID);
-			//cred_request.SetIdentityId(s_c->GetId();
-			//cred_request.SetLogins(logins);
-			//cred_request.SetIdentityId(IDENTITY);
-			//authenticationResult.
-			
-			//auto cred_request_response = s_AmazonCognitoClient->(cred_request);
-			//new Aws::CognitoIdentityProvider::provder
-			////auto prov = new Auth
 
-			//auto persistentProvider = Aws::MakeShared<Aws::Auth::PersistentCognitoIdentityProvider_JsonFileImpl>(
-			//	"blah", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd","942521585968");
-			//persistentProvider->
-			//
-			//Aws::Auth::CognitoCachingAuthenticatedCredentialsProvider prov(persistentProvider);
-
-			//if (s3Client != NULL)
-			//{
-			//	Aws::Delete(s3Client);
-			//}
-			//Aws::CognitoIdentity::CognitoIdentityClient c( new Aws::Auth::AnonymousAWSCredentialsProvider;
 			auto response = s_c->GetCredentialsForIdentity(cred_request);
 
 			auto temp = response.GetResultWithOwnership().GetCredentials();
@@ -757,13 +726,7 @@ void TestSignIn()
 
 			s3Client = Aws::New<Aws::S3::S3Client>("s3client", creds);
 
-			UploadObject("gateblank9.brknk");
-			cout << "here now" << endl;
-
-			//if (!SendAccessTokenToServer(s_AccessToken))
-			//{
-			//	cout << "Unable to connect to server" << endl;
-			//}
+			//DownloadObject("gateblank9.brknk");
 		}
 		else if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NEW_PASSWORD_REQUIRED)
 		{
@@ -771,7 +734,7 @@ void TestSignIn()
 			challengeResponse.SetChallengeName(challengeName);
 			challengeResponse.SetClientId(APP_CLIENT_ID);
 			challengeResponse.SetSession(initiateAuthResult.GetSession());
-			challengeResponse.AddChallengeResponses("USERNAME", username);
+			challengeResponse.AddChallengeResponses("USERNAME", username.c_str());
 			challengeResponse.AddChallengeResponses("NEW_PASSWORD", password);
 			auto responseOutcome = s_AmazonCognitoClient->RespondToAuthChallenge(challengeResponse);
 			if (responseOutcome.IsSuccess())
@@ -812,8 +775,21 @@ void RunCognitoTest()
 	{
 		ConnectToServer();
 		//bool uploadRequestResult = RequestMapDeletion("gateblank6");//RequestMapUpload("gateblank6");
-		//bool uploadRequestResult = RequestMapUpload("gateblank4");
+		
+		//string file = mapName + ".brknk";
+		//UploadObject(file);
+		bool uploadRequestResult = RequestMapUpload("gateblank9");
+
+
 		RequestGetMapList();
+
+		MapEntry &currEntry = mapEntries[0];
+		if (RequestMapDownload(currEntry.id))
+		{
+			string path = currEntry.creatorName + "/";
+			string file = currEntry.name + ".brknk";
+			DownloadObject(path.c_str(), file.c_str());
+		}
 
 		CleanupServerConnection();
 	}
@@ -844,6 +820,15 @@ int main()
 	Aws::InitAPI(options);
 
 	RunCognitoTest();
+
+	//RequestGetMapList();
+
+	/*MapEntry &currEntry = mapEntries[0];
+	if (RequestMapDownload(currEntry.id))
+	{
+		string objectName = currEntry.creatorName + "/" + currEntry.name + ".brknk";
+		DownloadObject(objectName.c_str());
+	}*/
 	//SendTokenToServer("herro");
 	//s_Amz
 	//
