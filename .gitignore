@@ -1,0 +1,16 @@
+
+.vs/awsTest/v14/.suo
+*.db
+*.opendb
+*.dll
+*.log
+*.lastbuildstate
+*.tlog
+*.obj
+*.idb
+*.pdb
+awsTest/ClientID.h
+*.exe
+*.ilk
+*.iobj
+*.ipdb
