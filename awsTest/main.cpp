@@ -692,30 +692,21 @@ void TestSignIn()
 			Aws::CognitoIdentityProvider::Model::AuthenticationResultType authenticationResult = initiateAuthResult.GetAuthenticationResult();
 			cout << endl << "Congratulations, you have successfully signed in!" << endl;
 			cout << "\tToken Type: " << authenticationResult.GetTokenType() << endl;
-			//cout << "\tAccess Token: " << authenticationResult.GetAccessToken().substr(0, 20) << " ..." << endl;
-			cout << "\tAccess Token: " << authenticationResult.GetAccessToken() << " ..." << endl;
+			cout << "\tAccess Token: " << authenticationResult.GetAccessToken().substr(0, 20) << " ..." << endl;
 			cout << "\tExpires in " << authenticationResult.GetExpiresIn() << " seconds" << endl;
 			cout << "\tID Token: " << authenticationResult.GetIdToken().substr(0, 20) << " ..." << endl;
 			cout << "\tRefresh Token: " << authenticationResult.GetRefreshToken().substr(0, 20) << " ..." << endl;
 
-			//authenticationResult.
-			//string accessToken = authenticationResult.GetAccessToken().c_str();
-			//SendTokenToServer(accessToken);
 			s_IsLoggedIn = true;
 			s_TokenType = authenticationResult.GetTokenType().c_str();
 			s_AccessToken = authenticationResult.GetAccessToken().c_str();
 			s_IDToken = authenticationResult.GetIdToken().c_str();
 			s_RefreshToken = authenticationResult.GetRefreshToken().c_str();
 
-			//"us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd_us-east-1_6v9AExXS8"
 			Aws::CognitoIdentity::Model::GetIdRequest idreq;
-
-			
-
 			idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());
 			idreq.SetAccountId("942521585968");
 			idreq.SetIdentityPoolId("us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
-
 			auto getidoutcome = s_c->GetId(idreq);
 			Aws::String identityID;
 			if (getidoutcome.IsSuccess())
@@ -728,13 +719,7 @@ void TestSignIn()
 				cout << "GET ID OUTCOME FAILED" << endl;
 			}
 
-
 			Aws::CognitoIdentity::Model::GetCredentialsForIdentityRequest cred_request;
-
-			//Aws::Map<Aws::String, Aws::String> logins;
-
-			//logins["us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd_us-east-1_6v9AExXS8"] = s_IDToken.c_str();
-			//logins["cognito-idp.eu-west-1.amazonaws.com/eu-west-1_USERPOOL"] = TOKEN
 
 			cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
 			cred_request.SetIdentityId(identityID);
@@ -763,9 +748,16 @@ void TestSignIn()
 			auto temp = response.GetResultWithOwnership().GetCredentials();
 			Aws::Auth::AWSCredentials creds(temp.GetAccessKeyId(), temp.GetSecretKey(), temp.GetSessionToken());
 			//auto creds = response.getresult
+
+			if (s3Client != NULL)
+			{
+				Aws::Delete(s3Client);
+				s3Client = NULL;
+			}
+
 			s3Client = Aws::New<Aws::S3::S3Client>("s3client", creds);
 
-			UploadObject("gateblank8.brknk");
+			UploadObject("gateblank9.brknk");
 			cout << "here now" << endl;
 
 			//if (!SendAccessTokenToServer(s_AccessToken))
