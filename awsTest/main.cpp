@@ -411,12 +411,12 @@ bool RequestMapDeletion(int id)
 				int statusCode = GetRequestStatusCode();
 				if (statusCode == 200)
 				{
-					cout << "you have permission to delete the map" << endl;
+					cout << "map has been deleted" << endl;
 					okay = true;
 				}
 				else if (statusCode == 302)
 				{
-					cout << "map doesn't exist. you can't download it." << endl;
+					cout << "you do not have permission to delete the map. status code: " << statusCode << endl;
 				}
 				else
 				{
@@ -537,7 +537,7 @@ void RequestGetMapList()
 	}
 }
 
-void RemoveObject(const Aws::String &file)
+bool RemoveObject(const Aws::String &file)
 {
 	Aws::String bucketFilePath = Aws::String(username.c_str()) + "/" + file;
 
@@ -551,15 +551,15 @@ void RemoveObject(const Aws::String &file)
 	if (outcome.IsSuccess())
 	{
 		cout << "deleted: " << file << endl;
+		return true;
 	}
 	else
 	{
 		std::cout << "delete object error: " <<
 			outcome.GetError().GetExceptionName() << " " <<
 			outcome.GetError().GetMessage() << std::endl;
+		return false;
 	}
-
-
 }
 
 void UploadObject(const Aws::String &path, const Aws::String &file)
@@ -761,6 +761,33 @@ void TestSignIn()
 	}
 }
 
+bool AttemptMapDeletionFromServer(MapEntry &entry)
+{
+	if (RequestMapDeletion(entry.id))
+	{
+		cout << "map " << entry.name << "by user: " << entry.creatorName << " has been removed" << endl;
+		return true;
+	}
+	else
+	{
+		cout << "failed to remove map: " << entry.name << " by user: " << entry.creatorName << endl;
+		return false;
+	}
+}
+
+bool AttemptMapUploadToServer(const std::string &mapName)
+{
+	if (RequestMapUpload(mapName))
+	{
+		string path = "MyMaps/";
+		string file = mapName + ".brknk";
+		UploadObject(path.c_str(), file.c_str()); //assumed to work for now..
+		return true;
+	}
+
+	return false;
+}
+
 void RunCognitoTest()
 {
 	auto anonCred = Aws::MakeShared<Aws::Auth::CognitoCachingAnonymousCredentialsProvider>(
@@ -785,33 +812,13 @@ void RunCognitoTest()
 		//string file = mapName + ".brknk";
 		//UploadObject(file);
 
-		/*string deleteName = "gateblank8";
-		if (RequestMapUpload(uploadName))
-		{
-			string path = "MyMaps/";
-			string file = uploadName + ".brknk";
-			UploadObject(path.c_str(), file.c_str());
-		}*/
-
-		/*string uploadName = "gateblank8";
-		if (RequestMapUpload(uploadName))
-		{
-			string path = "MyMaps/";
-			string file = uploadName + ".brknk";
-			UploadObject(path.c_str(), file.c_str());
-		}*/
+		//AttemptMapUploadToServer("gateblank9");
 
 		RequestGetMapList();
 
-		MapEntry &currEntry = mapEntries[0];
+		//MapEntry &currEntry = mapEntries[0];
 
-		if (RequestMapDeletion(currEntry.id))
-		{
-			string file = currEntry.name + ".brknk";
-			RemoveObject(file.c_str());
-
-			//have some kind of a flag to also remove it from your local system.
-		}
+		AttemptMapDeletionFromServer(mapEntries[0]);
 
 		/*if (RequestMapDownload(currEntry.id))
 		{
