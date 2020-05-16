@@ -114,15 +114,15 @@ struct ServerConnection
 	HINTERNET myRequest;
 	string sessionHeaderName;
 	LPCWSTR ContentType_JSON;
-	std::vector<MapEntry> mapEntries;
+	
 
 	ServerConnection()
 	{
 		sessionHeaderName = "Session-Token:";
 		ContentType_JSON = L"Content-Type:application/json";
-		HINTERNET myConnection = NULL;
-		HINTERNET mySession = NULL;
-		HINTERNET myRequest = NULL;
+		myConnection = NULL;
+		mySession = NULL;
+		myRequest = NULL;
 	}
 
 	HINTERNET OpenRequest(LPCWSTR verb, LPCWSTR path)
@@ -472,7 +472,7 @@ struct ServerConnection
 		return found;
 	}
 
-	void RequestGetMapList()
+	bool RequestGetMapList( std::vector<MapEntry> &entryVec )
 	{
 		myRequest = OpenRequest(Verb::GET, L"/MapServer/rest/maps");
 
@@ -496,21 +496,16 @@ struct ServerConnection
 
 					cout << "return data:" << endl;
 					cout << data << endl;*/
-					cout << "Listing all maps on server: " << endl;
-
+					
 					auto mapListJSON = json::parse(data);
-					//std::vector<MapEntry> mapEntries;
 					int numEntries = mapListJSON.size();
-					mapEntries.resize(numEntries);
+					entryVec.resize(numEntries);
 					for (int i = 0; i < numEntries; ++i)
 					{
-						mapEntries[i].Set(mapListJSON[i]);
+						entryVec[i].Set(mapListJSON[i]);
 					}
 
-					for (int i = 0; i < numEntries; ++i)
-					{
-						cout << "map: " << mapEntries[i].name << "   by user: " << mapEntries[i].creatorName << endl;
-					}
+					return true;
 				}
 			}
 			else
@@ -525,6 +520,8 @@ struct ServerConnection
 		{
 			cout << "failed to create request" << endl;
 		}
+
+		return false;
 	}
 };
 
@@ -621,6 +618,8 @@ struct S3Interface
 		downloadDest = downloadPath + file;
 		cout << "downloading: " << file << endl;
 
+		string *test = new string;
+
 		Aws::S3::Model::GetObjectRequest getReq;
 		getReq.WithBucket(bucketName.c_str());
 		getReq.WithKey(key);//"gateblank9.brknk");
@@ -644,37 +643,43 @@ Aws::String S3Interface::downloadDest = "";
 
 struct CognitoInterface
 {
-	std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
-	std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> s_c;
-	bool s_IsLoggedIn;
-	string s_TokenType;
-	string s_AccessToken;
-	string s_IDToken;
-	string s_RefreshToken;
+	std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> identityProviderClient;
+	std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> identityClient;
+	bool isLoggedIn;
+	string tokenType;
+	string accessToken;
+	string IDToken;
+	string refreshToken;
 	string username;
 	Aws::Auth::AWSCredentials currCreds;
 
+	const char * const &GetAccessToken()
+	{
+		assert(isLoggedIn);
+		return accessToken.c_str();
+	}
+
 	CognitoInterface()
 	{
-		s_IsLoggedIn = false;
+		isLoggedIn = false;
 	}
 
 	void InitWithCredentials(const Aws::Auth::AWSCredentials &creds)
 	{
-		if (s_AmazonCognitoClient == NULL)
+		if (identityProviderClient == NULL)
 		{
 			currCreds = creds;
 			Aws::Client::ClientConfiguration clientConfiguration;
 			clientConfiguration.region = Aws::Region::US_EAST_1;
 
-			if (s_AmazonCognitoClient != NULL)
+			if (identityProviderClient != NULL)
 			{
-				s_AmazonCognitoClient = NULL; //deletes because its a shared_ptr
+				identityProviderClient = NULL; //deletes because its a shared_ptr
 			}
-			s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
+			identityProviderClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
 				CognitoIdentityProviderClient>("CognitoIdentityProviderClient", currCreds, clientConfiguration);
 
-			s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", currCreds, clientConfiguration);
+			identityClient = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", currCreds, clientConfiguration);
 		}
 		else
 		{
@@ -685,6 +690,12 @@ struct CognitoInterface
 
 	bool TryLogIn(const std::string &user, const std::string &pass)
 	{
+		if (isLoggedIn)
+		{
+			assert(0);
+			return false;
+		}
+
 		Aws::Http::HeaderValueCollection authParameters{
 			{ "USERNAME", user.c_str() },
 			{ "PASSWORD", pass.c_str() }
@@ -694,7 +705,7 @@ struct CognitoInterface
 		initiateAuthRequest.SetClientId(APP_CLIENT_ID);
 		initiateAuthRequest.SetAuthFlow(Aws::CognitoIdentityProvider::Model::AuthFlowType::USER_PASSWORD_AUTH);
 		initiateAuthRequest.SetAuthParameters(authParameters);
-		Aws::CognitoIdentityProvider::Model::InitiateAuthOutcome initiateAuthOutcome{ s_AmazonCognitoClient->InitiateAuth(initiateAuthRequest) };
+		Aws::CognitoIdentityProvider::Model::InitiateAuthOutcome initiateAuthOutcome{ identityProviderClient->InitiateAuth(initiateAuthRequest) };
 
 		if (initiateAuthOutcome.IsSuccess())
 		{
@@ -714,17 +725,17 @@ struct CognitoInterface
 				cout << "\tID Token: " << authenticationResult.GetIdToken().substr(0, 20) << " ..." << endl;
 				cout << "\tRefresh Token: " << authenticationResult.GetRefreshToken().substr(0, 20) << " ..." << endl;*/
 
-				s_IsLoggedIn = true;
-				s_TokenType = authenticationResult.GetTokenType().c_str();
-				s_AccessToken = authenticationResult.GetAccessToken().c_str();
-				s_IDToken = authenticationResult.GetIdToken().c_str();
-				s_RefreshToken = authenticationResult.GetRefreshToken().c_str();
+				isLoggedIn = true;
+				tokenType = authenticationResult.GetTokenType().c_str();
+				accessToken = authenticationResult.GetAccessToken().c_str();
+				IDToken = authenticationResult.GetIdToken().c_str();
+				refreshToken = authenticationResult.GetRefreshToken().c_str();
 
 				Aws::CognitoIdentity::Model::GetIdRequest idreq;
-				idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());
+				idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", IDToken.c_str());
 				idreq.SetAccountId("942521585968");
 				idreq.SetIdentityPoolId("us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
-				auto getidoutcome = s_c->GetId(idreq);
+				auto getidoutcome = identityClient->GetId(idreq);
 				Aws::String identityID;
 				if (getidoutcome.IsSuccess())
 				{
@@ -738,21 +749,17 @@ struct CognitoInterface
 
 				Aws::CognitoIdentity::Model::GetCredentialsForIdentityRequest cred_request;
 
-				cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
+				cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", IDToken.c_str());
 				cred_request.SetIdentityId(identityID);
 
-				auto response = s_c->GetCredentialsForIdentity(cred_request);
+				auto response = identityClient->GetCredentialsForIdentity(cred_request);
 
 				auto temp = response.GetResultWithOwnership().GetCredentials();
 				Aws::Auth::AWSCredentials creds(temp.GetAccessKeyId(), temp.GetSecretKey(), temp.GetSessionToken());
 				currCreds = creds;
 
 				username = user;
-				//auto creds = response.getresult
-
 				return true;
-
-				//s3Interface.InitWithCredentials(creds);
 			}
 			else if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NEW_PASSWORD_REQUIRED)
 			{
@@ -762,7 +769,7 @@ struct CognitoInterface
 				challengeResponse.SetSession(initiateAuthResult.GetSession());
 				challengeResponse.AddChallengeResponses("USERNAME", username.c_str());
 				challengeResponse.AddChallengeResponses("NEW_PASSWORD", pass.c_str());
-				auto responseOutcome = s_AmazonCognitoClient->RespondToAuthChallenge(challengeResponse);
+				auto responseOutcome = identityProviderClient->RespondToAuthChallenge(challengeResponse);
 				if (responseOutcome.IsSuccess())
 				{
 					cout << "response succeeded" << endl;
@@ -783,117 +790,157 @@ struct CognitoInterface
 	}
 };
 
-
-S3Interface s3Interface;
-ServerConnection serverConn;
-CognitoInterface cognitoInterface;
-
-void CreateClientsWithAnonymousCredentials()
+struct CustomMapClient
 {
-	Aws::Auth::CognitoCachingAnonymousCredentialsProvider *anonCredProvider = new Aws::Auth::CognitoCachingAnonymousCredentialsProvider(
-		"942521585968", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
-
-	Aws::Auth::AWSCredentials anonCreds = anonCredProvider->GetAWSCredentials();
-
-	s3Interface.InitWithCredentials(anonCreds);
-	cognitoInterface.InitWithCredentials(anonCreds);
-}
-
-bool AttemptMapDeletionFromServer(MapEntry &entry)
-{
-	if (serverConn.RequestMapDeletion(entry.id, cognitoInterface.s_AccessToken.c_str() ))
+	CustomMapClient()
 	{
-		cout << "map " << entry.name << " by user: " << entry.creatorName << " has been removed" << endl;
-		return true;
+		Aws::Utils::Logging::LogLevel logLevel{ Aws::Utils::Logging::LogLevel::Trace };
+		//options.loggingOptions.logLevel = logLevel;
+		AWSSDKOptions.loggingOptions.logger_create_fn = [logLevel] {return std::make_shared<Aws::Utils::Logging::ConsoleLogSystem>(logLevel); };
+		Aws::InitAPI(AWSSDKOptions);
 	}
-	else
+
+	~CustomMapClient()
 	{
-		cout << "failed to remove map: " << entry.name << " by user: " << entry.creatorName << endl;
+		Cleanup();
+	}
+
+	void AnonymousInit()
+	{
+		Aws::Auth::CognitoCachingAnonymousCredentialsProvider *anonCredProvider = new Aws::Auth::CognitoCachingAnonymousCredentialsProvider(
+			"942521585968", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
+
+		Aws::Auth::AWSCredentials anonCreds = anonCredProvider->GetAWSCredentials();
+
+		s3Interface.InitWithCredentials(anonCreds);
+		cognitoInterface.InitWithCredentials(anonCreds);
+
+		serverConn.ConnectToServer();
+	}
+
+	void Cleanup()
+	{
+		serverConn.CleanupServerConnection();
+		Aws::ShutdownAPI(AWSSDKOptions);
+	}
+
+	bool AttemptDeleteMapFromServer(MapEntry &entry)
+	{
+		if (IsLoggedIn())
+		{
+			if (serverConn.RequestMapDeletion(entry.id, cognitoInterface.GetAccessToken()))
+			{
+				cout << "map " << entry.name << " by user: " << entry.creatorName << " has been removed" << endl;
+				return true;
+			}
+			else
+			{
+				cout << "failed to remove map: " << entry.name << " by user: " << entry.creatorName << endl;
+			}
+		}
+
 		return false;
 	}
-}
 
-bool AttemptMapUploadToServer( const std::string &path, const std::string &mapName)
-{
-	if (serverConn.RequestMapUpload(mapName, cognitoInterface.s_AccessToken.c_str() ))
+	bool AttemptUploadMapToServer(const std::string &path, const std::string &mapName)
 	{
-		MapEntry entry;
-		entry.name = mapName;
-		string file = entry.GetMapFileName();
-		s3Interface.UploadObject(path.c_str(), file.c_str(), cognitoInterface.username.c_str() ); //assumed to work for now..
-		return true;
+		if (IsLoggedIn())
+		{
+			if (serverConn.RequestMapUpload(mapName, cognitoInterface.GetAccessToken()))
+			{
+				MapEntry entry;
+				entry.name = mapName;
+				string file = entry.GetMapFileName();
+				s3Interface.UploadObject(path.c_str(), file.c_str(), cognitoInterface.username.c_str()); //assumed to work for now..
+				return true;
+			}
+		}
+
+		return false;
 	}
 
-	return false;
-}
-
-bool AttemptMapDownloadFromServer( const std::string &downloadPath, MapEntry &entry)
-{
-	if (serverConn.RequestMapDownload(entry.id))
+	bool AttemptDownloadMapFromServer(const std::string &downloadPath, MapEntry &entry)
 	{
-		string key = entry.CreateKey();
-		string file = entry.GetMapFileName();
-		s3Interface.DownloadObject( downloadPath.c_str(), key.c_str(), file.c_str());
-		return true;
+		if (serverConn.RequestMapDownload(entry.id))
+		{
+			string key = entry.CreateKey();
+			string file = entry.GetMapFileName();
+			s3Interface.DownloadObject(downloadPath.c_str(), key.c_str(), file.c_str());
+			return true;
+		}
+
+		return false;
 	}
 
-	return false;
-}
-
-void RunCognitoTest()
-{
-	if (cognitoInterface.TryLogIn("test", "Shephard123~"))
+	bool AttempGetMapListFromServer()
 	{
-		s3Interface.InitWithCredentials(cognitoInterface.currCreds);
+		return serverConn.RequestGetMapList(mapEntries);
+	}
+	
+	void PrintMapEntries()
+	{
+		cout << "Listing all maps: " << endl;
+		int numEntries = mapEntries.size();
+		for (int i = 0; i < numEntries; ++i)
+		{
+			cout << "map: " << mapEntries[i].name << "   by user: " << mapEntries[i].creatorName << endl;
+		}
 	}
 
-	if (cognitoInterface.s_IsLoggedIn)
+	bool AttemptUserLogin(const std::string &user, const std::string &pass)
 	{
-		//AttemptMapUploadToServer("MyMaps/", "gateblank5");
-
-		serverConn.RequestGetMapList();
-
-		AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
-
-		//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[1]);
+		if (!IsLoggedIn())
+		{
+			if (cognitoInterface.TryLogIn("test", "Shephard123~"))
+			{
+				s3Interface.InitWithCredentials(cognitoInterface.currCreds);
+				return true;
+			}
+		}
+		return false;
 	}
-}
 
-static Aws::SDKOptions AWSSDKOptions;
-void InitAWS()
-{
-	Aws::Utils::Logging::LogLevel logLevel{ Aws::Utils::Logging::LogLevel::Trace };
-	//options.loggingOptions.logLevel = logLevel;
-	AWSSDKOptions.loggingOptions.logger_create_fn = [logLevel] {return std::make_shared<Aws::Utils::Logging::ConsoleLogSystem>(logLevel); };
-	Aws::InitAPI(AWSSDKOptions);
-}
+	bool IsLoggedIn()
+	{
+		return cognitoInterface.isLoggedIn;
+	}
 
-void CleanupAWS()
-{
-	Aws::ShutdownAPI(AWSSDKOptions);
-}
+	std::vector<MapEntry> mapEntries;
+
+private:
+	S3Interface s3Interface;
+	ServerConnection serverConn;
+	CognitoInterface cognitoInterface;
+	Aws::SDKOptions AWSSDKOptions;
+	
+};
 
 int main()
 {
-	InitAWS();
-	
-	CreateClientsWithAnonymousCredentials();
-	serverConn.ConnectToServer();
+	CustomMapClient customMapClient;
+	customMapClient.AnonymousInit();
 
+	customMapClient.AttemptUserLogin("test", "Shephard123~");
+	
+	
+	//customMapClient.AttemptUploadMapToServer("MyMaps/", "gateblank8");
+	customMapClient.AttempGetMapListFromServer();
+
+	customMapClient.AttemptDeleteMapFromServer(customMapClient.mapEntries[1]);
+
+	customMapClient.AttempGetMapListFromServer();
+
+	customMapClient.PrintMapEntries();
 	//serverConn.RequestGetMapList();
 
 	//AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
 
 	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
 
-	serverConn.RequestGetMapList();
-	AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
+	//customClient.AttempGetMapListFromServer();
+	//customClient.AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
 
 	//RunCognitoTest();
-
-	serverConn.CleanupServerConnection();
-
-	CleanupAWS();
 
 	cout << endl << "done" << endl;
 	int x;
