@@ -99,18 +99,7 @@ struct MapEntry
 	//}
 };
 
-static std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
-static std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> s_c;
-static bool s_IsLoggedIn = false;
-static string s_TokenType;
-static string s_AccessToken;
-static string s_IDToken;
-static string s_RefreshToken;
 
-static string username;
-
-//static Aws::CognitoIdentityProvider::Model::AuthenticationResultType authResult;
-static bool loggedIn = false;
 
 
 
@@ -310,9 +299,9 @@ struct ServerConnection
 		return WinHttpAddRequestHeaders(myRequest, ContentType_JSON, -1, WINHTTP_ADDREQ_FLAG_ADD);
 	}
 
-	bool AddHeaderSessionToken()
+	bool AddHeaderSessionToken( const std::string &accessToken )
 	{
-		string sessionHeader = sessionHeaderName + s_AccessToken;
+		string sessionHeader = sessionHeaderName + accessToken;
 		wstring wideSessionHeader = wstring(sessionHeader.begin(), sessionHeader.end());
 		LPCWSTR wsh = wideSessionHeader.c_str();
 
@@ -332,7 +321,7 @@ struct ServerConnection
 			0, 0);
 	}
 
-	bool RequestMapUpload(const string &mapName)
+	bool RequestMapUpload(const string &mapName, const std::string &accessToken)
 	{
 		myRequest = OpenRequest(Verb::POST, L"/MapServer/rest/maps");
 
@@ -340,7 +329,7 @@ struct ServerConnection
 		if (myRequest != NULL)
 		{
 			AddHeaderContentTypeJSON();
-			AddHeaderSessionToken();
+			AddHeaderSessionToken(accessToken);
 
 			json j;
 			j["name"] = mapName;
@@ -395,7 +384,7 @@ struct ServerConnection
 		return okay;
 	}
 
-	bool RequestMapDeletion(int id)
+	bool RequestMapDeletion(int id, const std::string & accessToken )
 	{
 		wstring path = L"/MapServer/rest/maps/" + to_wstring(id);
 		myRequest = OpenRequest(Verb::DELETE, path.c_str());
@@ -404,7 +393,7 @@ struct ServerConnection
 
 		if (myRequest != NULL)
 		{
-			AddHeaderSessionToken();
+			AddHeaderSessionToken(accessToken);
 
 			if (SendRequest())
 			{
@@ -591,13 +580,15 @@ struct S3Interface
 		}
 	}*/
 
-	void UploadObject(const Aws::String &path, const Aws::String &file)
+	void UploadObject(const Aws::String &path, const Aws::String &file, const Aws::String &username)
 	{
-		if (!s_IsLoggedIn)
-		{
-			cout << "tried to upload, but aren't logged in" << endl;
-			return;
-		}
+		//must be logged in as a user to upload
+
+		//if (!s_IsLoggedIn)
+		//{
+		//	cout << "tried to upload, but aren't logged in" << endl;
+		//	return;
+		//}
 
 		//mapName = map;
 		cout << "uploading: " << file << endl;
@@ -653,10 +644,153 @@ struct S3Interface
 		}
 	}
 };
+
+struct CognitoInterface
+{
+	std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
+	std::shared_ptr<Aws::CognitoIdentity::CognitoIdentityClient> s_c;
+	bool s_IsLoggedIn;
+	string s_TokenType;
+	string s_AccessToken;
+	string s_IDToken;
+	string s_RefreshToken;
+	string username;
+	Aws::Auth::AWSCredentials currCreds;
+
+	CognitoInterface()
+	{
+		s_IsLoggedIn = false;
+	}
+
+	void InitWithCredentials(const Aws::Auth::AWSCredentials &creds)
+	{
+		if (s_AmazonCognitoClient == NULL)
+		{
+			currCreds = creds;
+			Aws::Client::ClientConfiguration clientConfiguration;
+			clientConfiguration.region = Aws::Region::US_EAST_1;
+
+			if (s_AmazonCognitoClient != NULL)
+			{
+				s_AmazonCognitoClient = NULL; //deletes because its a shared_ptr
+			}
+			s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
+				CognitoIdentityProviderClient>("CognitoIdentityProviderClient", currCreds, clientConfiguration);
+
+			s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", currCreds, clientConfiguration);
+		}
+		else
+		{
+			cout << "cognito interface already initialized!";
+			assert(0);
+		}
+	}
+
+	bool TryLogIn(const std::string &user, const std::string &pass)
+	{
+		Aws::Http::HeaderValueCollection authParameters{
+			{ "USERNAME", user.c_str() },
+			{ "PASSWORD", pass.c_str() }
+		};
+
+		Aws::CognitoIdentityProvider::Model::InitiateAuthRequest initiateAuthRequest;
+		initiateAuthRequest.SetClientId(APP_CLIENT_ID);
+		initiateAuthRequest.SetAuthFlow(Aws::CognitoIdentityProvider::Model::AuthFlowType::USER_PASSWORD_AUTH);
+		initiateAuthRequest.SetAuthParameters(authParameters);
+		Aws::CognitoIdentityProvider::Model::InitiateAuthOutcome initiateAuthOutcome{ s_AmazonCognitoClient->InitiateAuth(initiateAuthRequest) };
+
+		if (initiateAuthOutcome.IsSuccess())
+		{
+			Aws::CognitoIdentityProvider::Model::InitiateAuthResult initiateAuthResult{ initiateAuthOutcome.GetResult() };
+			auto challengeName = initiateAuthResult.GetChallengeName();
+			cout << "challengeName: " << (int)challengeName << endl;
+			if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NOT_SET)
+			{
+				// for this code sample, this is what we expect, there should be no further challenges
+				// there are more complex options, for example requiring the user to reset the password the first login
+				// or using a more secure password transfer mechanism which will be covered in later examples
+				Aws::CognitoIdentityProvider::Model::AuthenticationResultType authenticationResult = initiateAuthResult.GetAuthenticationResult();
+				cout << endl << "Congratulations, you have successfully signed in as user: " << user << endl;
+				/*cout << "\tToken Type: " << authenticationResult.GetTokenType() << endl;
+				cout << "\tAccess Token: " << authenticationResult.GetAccessToken().substr(0, 20) << " ..." << endl;
+				cout << "\tExpires in " << authenticationResult.GetExpiresIn() << " seconds" << endl;
+				cout << "\tID Token: " << authenticationResult.GetIdToken().substr(0, 20) << " ..." << endl;
+				cout << "\tRefresh Token: " << authenticationResult.GetRefreshToken().substr(0, 20) << " ..." << endl;*/
+
+				s_IsLoggedIn = true;
+				s_TokenType = authenticationResult.GetTokenType().c_str();
+				s_AccessToken = authenticationResult.GetAccessToken().c_str();
+				s_IDToken = authenticationResult.GetIdToken().c_str();
+				s_RefreshToken = authenticationResult.GetRefreshToken().c_str();
+
+				Aws::CognitoIdentity::Model::GetIdRequest idreq;
+				idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());
+				idreq.SetAccountId("942521585968");
+				idreq.SetIdentityPoolId("us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
+				auto getidoutcome = s_c->GetId(idreq);
+				Aws::String identityID;
+				if (getidoutcome.IsSuccess())
+				{
+					auto idresult = getidoutcome.GetResult();
+					identityID = idresult.GetIdentityId();
+				}
+				else
+				{
+					cout << "GET ID OUTCOME FAILED" << endl;
+				}
+
+				Aws::CognitoIdentity::Model::GetCredentialsForIdentityRequest cred_request;
+
+				cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
+				cred_request.SetIdentityId(identityID);
+
+				auto response = s_c->GetCredentialsForIdentity(cred_request);
+
+				auto temp = response.GetResultWithOwnership().GetCredentials();
+				Aws::Auth::AWSCredentials creds(temp.GetAccessKeyId(), temp.GetSecretKey(), temp.GetSessionToken());
+				currCreds = creds;
+
+				username = user;
+				//auto creds = response.getresult
+
+				return true;
+
+				//s3Interface.InitWithCredentials(creds);
+			}
+			else if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NEW_PASSWORD_REQUIRED)
+			{
+				Aws::CognitoIdentityProvider::Model::RespondToAuthChallengeRequest challengeResponse;
+				challengeResponse.SetChallengeName(challengeName);
+				challengeResponse.SetClientId(APP_CLIENT_ID);
+				challengeResponse.SetSession(initiateAuthResult.GetSession());
+				challengeResponse.AddChallengeResponses("USERNAME", username.c_str());
+				challengeResponse.AddChallengeResponses("NEW_PASSWORD", pass.c_str());
+				auto responseOutcome = s_AmazonCognitoClient->RespondToAuthChallenge(challengeResponse);
+				if (responseOutcome.IsSuccess())
+				{
+					cout << "response succeeded" << endl;
+				}
+				else
+				{
+					cout << "response failed" << endl;
+				}
+			}
+		}
+		else
+		{
+			Aws::Client::AWSError<Aws::CognitoIdentityProvider::CognitoIdentityProviderErrors> error = initiateAuthOutcome.GetError();
+			cout << "Error logging in: " << error.GetMessage() << endl << endl;
+		}
+
+		return false;
+	}
+};
+
 Aws::String S3Interface::downloadDest = "";
 
 S3Interface s3Interface;
 ServerConnection serverConn;
+CognitoInterface cognitoInterface;
 
 void CreateClientsWithAnonymousCredentials()
 {
@@ -666,119 +800,20 @@ void CreateClientsWithAnonymousCredentials()
 	Aws::Auth::AWSCredentials anonCreds = anonCredProvider->GetAWSCredentials();
 
 	s3Interface.InitWithCredentials(anonCreds);
-
-	Aws::Client::ClientConfiguration clientConfiguration;
-	clientConfiguration.region = Aws::Region::US_EAST_1;
-
-	if (s_AmazonCognitoClient != NULL)
-	{
-		s_AmazonCognitoClient = NULL; //deletes because its a shared_ptr
-	}
-	s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
-		CognitoIdentityProviderClient>("CognitoIdentityProviderClient", anonCreds, clientConfiguration);
-
-	s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", anonCreds, clientConfiguration);
+	cognitoInterface.InitWithCredentials(anonCreds);
 }
 
 void TestSignIn( const std::string &user, const std::string &pass )
 {
-	username = "test";
-	Aws::String password = "Shephard123~";
-
-	Aws::Http::HeaderValueCollection authParameters{
-		{ "USERNAME", username.c_str() },
-		{ "PASSWORD", password }
-	};
-
-	Aws::CognitoIdentityProvider::Model::InitiateAuthRequest initiateAuthRequest;
-	initiateAuthRequest.SetClientId(APP_CLIENT_ID);
-	initiateAuthRequest.SetAuthFlow(Aws::CognitoIdentityProvider::Model::AuthFlowType::USER_PASSWORD_AUTH);
-	initiateAuthRequest.SetAuthParameters(authParameters);
-	Aws::CognitoIdentityProvider::Model::InitiateAuthOutcome initiateAuthOutcome{ s_AmazonCognitoClient->InitiateAuth(initiateAuthRequest) };
-
-	if (initiateAuthOutcome.IsSuccess())
+	if (cognitoInterface.TryLogIn(user, pass))
 	{
-		Aws::CognitoIdentityProvider::Model::InitiateAuthResult initiateAuthResult{ initiateAuthOutcome.GetResult() };
-		auto challengeName = initiateAuthResult.GetChallengeName();
-		cout << "challengeName: " << (int)challengeName << endl;
-		if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NOT_SET)
-		{
-			// for this code sample, this is what we expect, there should be no further challenges
-			// there are more complex options, for example requiring the user to reset the password the first login
-			// or using a more secure password transfer mechanism which will be covered in later examples
-			Aws::CognitoIdentityProvider::Model::AuthenticationResultType authenticationResult = initiateAuthResult.GetAuthenticationResult();
-			cout << endl << "Congratulations, you have successfully signed in!" << endl;
-			cout << "\tToken Type: " << authenticationResult.GetTokenType() << endl;
-			cout << "\tAccess Token: " << authenticationResult.GetAccessToken().substr(0, 20) << " ..." << endl;
-			cout << "\tExpires in " << authenticationResult.GetExpiresIn() << " seconds" << endl;
-			cout << "\tID Token: " << authenticationResult.GetIdToken().substr(0, 20) << " ..." << endl;
-			cout << "\tRefresh Token: " << authenticationResult.GetRefreshToken().substr(0, 20) << " ..." << endl;
-
-			s_IsLoggedIn = true;
-			s_TokenType = authenticationResult.GetTokenType().c_str();
-			s_AccessToken = authenticationResult.GetAccessToken().c_str();
-			s_IDToken = authenticationResult.GetIdToken().c_str();
-			s_RefreshToken = authenticationResult.GetRefreshToken().c_str();
-
-			Aws::CognitoIdentity::Model::GetIdRequest idreq;
-			idreq.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());
-			idreq.SetAccountId("942521585968");
-			idreq.SetIdentityPoolId("us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
-			auto getidoutcome = s_c->GetId(idreq);
-			Aws::String identityID;
-			if (getidoutcome.IsSuccess())
-			{
-				auto idresult = getidoutcome.GetResult();
-				identityID = idresult.GetIdentityId();
-			}
-			else
-			{
-				cout << "GET ID OUTCOME FAILED" << endl;
-			}
-
-			Aws::CognitoIdentity::Model::GetCredentialsForIdentityRequest cred_request;
-
-			cred_request.AddLogins("cognito-idp.us-east-1.amazonaws.com/us-east-1_6v9AExXS8", s_IDToken.c_str());//s_IDToken.c_str());
-			cred_request.SetIdentityId(identityID);
-
-			auto response = s_c->GetCredentialsForIdentity(cred_request);
-
-			auto temp = response.GetResultWithOwnership().GetCredentials();
-			Aws::Auth::AWSCredentials creds(temp.GetAccessKeyId(), temp.GetSecretKey(), temp.GetSessionToken());
-			//auto creds = response.getresult
-
-			s3Interface.InitWithCredentials(creds);
-		}
-		else if (challengeName == Aws::CognitoIdentityProvider::Model::ChallengeNameType::NEW_PASSWORD_REQUIRED)
-		{
-			Aws::CognitoIdentityProvider::Model::RespondToAuthChallengeRequest challengeResponse;
-			challengeResponse.SetChallengeName(challengeName);
-			challengeResponse.SetClientId(APP_CLIENT_ID);
-			challengeResponse.SetSession(initiateAuthResult.GetSession());
-			challengeResponse.AddChallengeResponses("USERNAME", username.c_str());
-			challengeResponse.AddChallengeResponses("NEW_PASSWORD", password);
-			auto responseOutcome = s_AmazonCognitoClient->RespondToAuthChallenge(challengeResponse);
-			if (responseOutcome.IsSuccess())
-			{
-				cout << "response succeeded" << endl;
-			}
-			else
-			{
-				cout << "response failed" << endl;
-			}
-
-		}
-	}
-	else
-	{
-		Aws::Client::AWSError<Aws::CognitoIdentityProvider::CognitoIdentityProviderErrors> error = initiateAuthOutcome.GetError();
-		cout << "Error logging in: " << error.GetMessage() << endl << endl;
+		s3Interface.InitWithCredentials(cognitoInterface.currCreds);
 	}
 }
 
 bool AttemptMapDeletionFromServer(MapEntry &entry)
 {
-	if (serverConn.RequestMapDeletion(entry.id))
+	if (serverConn.RequestMapDeletion(entry.id, cognitoInterface.s_AccessToken.c_str() ))
 	{
 		cout << "map " << entry.name << " by user: " << entry.creatorName << " has been removed" << endl;
 		return true;
@@ -792,12 +827,12 @@ bool AttemptMapDeletionFromServer(MapEntry &entry)
 
 bool AttemptMapUploadToServer( const std::string &path, const std::string &mapName)
 {
-	if (serverConn.RequestMapUpload(mapName))
+	if (serverConn.RequestMapUpload(mapName, cognitoInterface.s_AccessToken.c_str() ))
 	{
 		MapEntry entry;
 		entry.name = mapName;
 		string file = entry.GetMapFileName();
-		s3Interface.UploadObject(path.c_str(), file.c_str()); //assumed to work for now..
+		s3Interface.UploadObject(path.c_str(), file.c_str(), cognitoInterface.username.c_str() ); //assumed to work for now..
 		return true;
 	}
 
@@ -819,15 +854,16 @@ bool AttemptMapDownloadFromServer( const std::string &downloadPath, MapEntry &en
 
 void RunCognitoTest()
 {
+	//cognitoInterface.TryLogIn("test", "Shephard123~");
 	TestSignIn( "test", "Shephard123~" );
 
-	if (s_IsLoggedIn)
+	if (cognitoInterface.s_IsLoggedIn)
 	{
-		//AttemptMapUploadToServer("MyMaps/", "gateblank8");
+		//AttemptMapUploadToServer("MyMaps/", "gateblank5");
 
 		serverConn.RequestGetMapList();
 
-		//AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
+		AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
 
 		//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[1]);
 	}
@@ -853,6 +889,12 @@ int main()
 	
 	CreateClientsWithAnonymousCredentials();
 	serverConn.ConnectToServer();
+
+	//serverConn.RequestGetMapList();
+
+	//AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
+
+	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
 
 	//serverConn.RequestGetMapList();
 	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
