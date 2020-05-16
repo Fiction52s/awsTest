@@ -41,9 +41,6 @@
 #include "ClientID.h"
 #include "nlohmann\json.hpp"
 
-
-
-
 using namespace std;
 using namespace Aws;
 using namespace Aws::CognitoIdentity::Model;
@@ -54,7 +51,7 @@ static Aws::S3::S3Client *s3Client = NULL;
 
 const char bucketName[] = "breakneckmaps";
 
-static Aws::String mName;
+static Aws::String downloadDest;
 
 
 static std::shared_ptr<Aws::CognitoIdentityProvider::CognitoIdentityProviderClient> s_AmazonCognitoClient;
@@ -113,18 +110,19 @@ struct MapEntry
 	//	creatorName = p_creatorName;
 	//}
 
-	void AddToJSON()// bool withID = false )
-	{
-		json j;
-		/*if (withID)
-		{
-		j["id"] = id;
-		}*/
-		j["id"] = id;
-		j["name"] = name;
-		j["creatorName"] = creatorName;
-	}
+	//void AddToJSON()// bool withID = false )
+	//{
+	//	json j;
+	//	/*if (withID)
+	//	{
+	//	j["id"] = id;
+	//	}*/
+	//	j["id"] = id;
+	//	j["name"] = name;
+	//	j["creatorName"] = creatorName;
+	//}
 };
+
 static std::vector<MapEntry> mapEntries;
 
 namespace Verb
@@ -259,51 +257,23 @@ string GetRequestHeaders()
 	return result;
 }
 
-void ListObjects()
-{
-	cout << "listing: " << endl;
-	Aws::S3::Model::ListObjectsRequest listReq;
-	listReq.WithBucket( bucketName );
-
-	auto outcome = s3Client->ListObjects(listReq);
-
-	if (outcome.IsSuccess())
-	{
-		Aws::Vector<Aws::S3::Model::Object> object_list =
-			outcome.GetResult().GetContents();
-
-		for (auto const &s3_object : object_list)
-		{
-			std::cout << "object: " << s3_object.GetKey() << std::endl;
-		}
-	}
-	else
-	{
-		std::cout << "ListObjects error: " <<
-			outcome.GetError().GetExceptionName() << " " <<
-			outcome.GetError().GetMessage() << std::endl;
-	}
-}
-
-
-
-
 void CleanupServerConnection()
 {
-	//if (myRequest) WinHttpCloseHandle(myRequest);
 	if (myConnection != NULL ) WinHttpCloseHandle(myConnection);
 	if (mySession != NULL ) WinHttpCloseHandle(mySession);
 
-	//myRequest = NULL;
 	myConnection = NULL;
 	mySession = NULL;
 }
 
-void ConnectToServer()
+bool ConnectToServer()
 {
 	DWORD dwSize = 0;
 	DWORD dwDownloaded = 0;
 	BOOL  bResults = FALSE;
+
+	assert(mySession == NULL);
+	assert(myConnection == NULL);
 
 	mySession = WinHttpOpen(L"WinHTTP Example/1.0",
 		WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -315,6 +285,17 @@ void ConnectToServer()
 		myConnection = WinHttpConnect(mySession, L"localhost",
 			8080, 0);
 	}	
+
+	if (myConnection == NULL)
+	{
+		CleanupServerConnection();
+		mySession = NULL;
+		return false;
+	}
+	else
+	{
+		return true;
+	}
 }
 
 bool AddHeaderContentTypeJSON()
@@ -512,15 +493,18 @@ void RequestGetMapList()
 			if (WinHttpReceiveResponse(myRequest, NULL))
 			{
 				int statusCode = GetRequestStatusCode();
-				string headers = GetRequestHeaders();
 				string data = GetRequestData();
 
+				/*string headers = GetRequestHeaders();
+				
+				
 				cout << "status code: " << statusCode << endl;
 				cout << "headers: " << endl;
 				cout << headers << endl;
 
 				cout << "return data:" << endl;
-				cout << data << endl;
+				cout << data << endl;*/
+				cout << "Listing all maps on server: " << endl;
 
 				auto mapListJSON = json::parse(data);
 				//std::vector<MapEntry> mapEntries;
@@ -533,7 +517,7 @@ void RequestGetMapList()
 
 				for (int i = 0; i < numEntries; ++i)
 				{
-					cout << "map: " << mapEntries[i].name << "   by: " << mapEntries[i].creatorName << endl;
+					cout << "map: " << mapEntries[i].name << "   by user: " << mapEntries[i].creatorName << endl;
 				}
 			}
 		}
@@ -616,13 +600,13 @@ void UploadObject(const Aws::String &path, const Aws::String &file)
 void DownloadObject( const Aws::String &downloadPath, const Aws::String &key, const Aws::String &file )
 {
 	//assumes its a map
-	mName =  downloadPath + file;
+	downloadDest =  downloadPath + file;
 	cout << "downloading: " << file << endl;
 
 	Aws::S3::Model::GetObjectRequest getReq;
 	getReq.WithBucket(bucketName);
 	getReq.WithKey(key);//"gateblank9.brknk");
-	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", mName.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
+	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", downloadDest.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
 
 	auto outcome = s3Client->GetObject(getReq);
 
@@ -638,38 +622,33 @@ void DownloadObject( const Aws::String &downloadPath, const Aws::String &key, co
 	}
 }
 
-void CreateClients()
+void CreateClientsWithAnonymousCredentials()
 {
-	Aws::Auth::CognitoCachingAnonymousCredentialsProvider *credentials = new Aws::Auth::CognitoCachingAnonymousCredentialsProvider(
+	Aws::Auth::CognitoCachingAnonymousCredentialsProvider *anonCred = new Aws::Auth::CognitoCachingAnonymousCredentialsProvider(
 		"942521585968", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
 
-	if (s3Client == NULL)
+	if (s3Client != NULL)
 	{
-		s3Client = Aws::New<Aws::S3::S3Client>("s3client", credentials->GetAWSCredentials());
+		Aws::Delete(s3Client);
+		s3Client = NULL;
 	}
-	else
+	s3Client = Aws::New<Aws::S3::S3Client>("s3client", anonCred->GetAWSCredentials());
+
+
+	Aws::Client::ClientConfiguration clientConfiguration;
+	clientConfiguration.region = Aws::Region::US_EAST_1;
+
+	if (s_AmazonCognitoClient != NULL)
 	{
-		cout << "s3 client should be null here" << endl;
+		s_AmazonCognitoClient = NULL; //deletes because its a shared_ptr
 	}
+	s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
+		CognitoIdentityProviderClient>("CognitoIdentityProviderClient", anonCred->GetAWSCredentials(), clientConfiguration);
 
-	
-
-	//Aws::Delete(credentials);
-	//s3Client = Aws::New<Aws::S3::S3Client>("s3client", clientConfiguration);
+	s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", anonCred->GetAWSCredentials(), clientConfiguration);
 }
 
-void RunBucketTest()
-{
-	CreateClients();
-
-	ListObjects();
-
-	//UploadObject("gateblank8.brknk");
-
-	//ListObjects();
-}
-
-void TestSignIn()
+void TestSignIn( const std::string &user, const std::string &pass )
 {
 	username = "test";
 	Aws::String password = "Shephard123~";
@@ -816,82 +795,47 @@ bool AttemptMapDownloadFromServer( const std::string &downloadPath, MapEntry &en
 
 void RunCognitoTest()
 {
-	auto anonCred = Aws::MakeShared<Aws::Auth::CognitoCachingAnonymousCredentialsProvider>(
-		"AnonCredentialsProvider", "942521585968", "us-east-1:e8840b78-d9e3-4c03-8d6b-a9bdd5833fbd");
-
-	Aws::Client::ClientConfiguration clientConfiguration;
-	clientConfiguration.region = Aws::Region::US_EAST_1;
-
-	//auto cog = new Aws::CognitoIdentity::CognitoIdentityClient(credentials->GetAWSCredentials(), clientConfiguration);
-	s_AmazonCognitoClient = Aws::MakeShared<Aws::CognitoIdentityProvider::
-		CognitoIdentityProviderClient>("CognitoIdentityProviderClient", anonCred->GetAWSCredentials(), clientConfiguration);
-
-	s_c = Aws::MakeShared<Aws::CognitoIdentity::CognitoIdentityClient>("clienttest", anonCred->GetAWSCredentials(), clientConfiguration);
-	
-	TestSignIn();
+	TestSignIn( "test", "Shephard123~" );
 
 	if (s_IsLoggedIn)
 	{
-		ConnectToServer();
-		//bool uploadRequestResult = RequestMapDeletion("gateblank6");//RequestMapUpload("gateblank6");
-		
-		//string file = mapName + ".brknk";
-		//UploadObject(file);
-
 		AttemptMapUploadToServer("MyMaps/", "gateblank9");
 
 		RequestGetMapList();
 
-		AttemptMapDeletionFromServer(mapEntries[0]);
+		//AttemptMapDeletionFromServer(mapEntries[0]);
 
 		//AttemptMapDownloadFromServer("DownloadedMaps/", mapEntries[0]);
-
-		CleanupServerConnection();
 	}
-	/*Aws::CognitoIdentityProvider::Model::ChangePasswordRequest changePasswordRequest;
-	changePasswordRequest.SetAccessToken(s_AccessToken);
-	changePasswordRequest.SetPreviousPassword(currentPassword);
-	changePasswordRequest.SetProposedPassword(newPassword);*/
+}
 
+static Aws::SDKOptions AWSSDKOptions;
+void InitAWS()
+{
+	Aws::Utils::Logging::LogLevel logLevel{ Aws::Utils::Logging::LogLevel::Trace };
+	//options.loggingOptions.logLevel = logLevel;
+	AWSSDKOptions.loggingOptions.logger_create_fn = [logLevel] {return std::make_shared<Aws::Utils::Logging::ConsoleLogSystem>(logLevel); };
+	Aws::InitAPI(AWSSDKOptions);
+}
 
-
-
-
-
-	
+void CleanupAWS()
+{
+	Aws::ShutdownAPI(AWSSDKOptions);
 }
 
 int main()
 {
-	//RunDBTest();
-	//const string poolID = "us-west-2_VMpmSWzDz";
-	//const char* region = Aws::Region::US_WEST_2;
+	InitAWS();
+	
+	CreateClientsWithAnonymousCredentials();
+	ConnectToServer();
 
+	RequestGetMapList();
+	//RunCognitoTest();
 
-	Aws::SDKOptions options;
-	Aws::Utils::Logging::LogLevel logLevel{ Aws::Utils::Logging::LogLevel::Trace };
-	//options.loggingOptions.logLevel = logLevel;
-	options.loggingOptions.logger_create_fn = [logLevel] {return std::make_shared<Aws::Utils::Logging::ConsoleLogSystem>(logLevel); };
-	Aws::InitAPI(options);
+	CleanupServerConnection();
 
-	RunCognitoTest();
-
-	//RequestGetMapList();
-
-	/*MapEntry &currEntry = mapEntries[0];
-	if (RequestMapDownload(currEntry.id))
-	{
-		string objectName = currEntry.creatorName + "/" + currEntry.name + ".brknk";
-		DownloadObject(objectName.c_str());
-	}*/
-	//SendTokenToServer("herro");
-	//s_Amz
-	//
-	////RunBucketTest();
-	//RunDBTest();
-	////RunBucketTest();
-
-	Aws::ShutdownAPI(options);
+	CleanupAWS();
 
 	cout << endl << "done" << endl;
 	int x;
