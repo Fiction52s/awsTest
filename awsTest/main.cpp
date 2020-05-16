@@ -21,8 +21,9 @@
 #include <aws/cognito-idp/model/RespondToAuthChallengeRequest.h>
 
 #include <aws/s3/model/GetObjectRequest.h>
-#include <aws/s3/model/ListObjectsRequest.h>
 #include <aws/s3/model/PutObjectRequest.h>
+#include <aws/s3/model/ListObjectsRequest.h>
+
 #include <aws/s3/model/DeleteObjectRequest.h>
 
 #include <aws/identity-management/auth/PersistentCognitoIdentityProvider.h>
@@ -49,7 +50,7 @@ using std::cout;
 
 using json = nlohmann::json;
 
-struct MapEntry
+struct CustomMapEntry
 {
 	int id;
 	string name;
@@ -57,7 +58,7 @@ struct MapEntry
 
 	//json jsonObj;
 
-	MapEntry()
+	CustomMapEntry()
 	{
 
 	}
@@ -79,7 +80,7 @@ struct MapEntry
 		return string(creatorName + "/" + GetMapFileName());
 	}
 
-	//MapEntry(const std::string &p_name, const std::string &p_creatorName)
+	//CustomMapEntry(const std::string &p_name, const std::string &p_creatorName)
 	//{
 	//	//id = -1;
 	//	name = p_name;
@@ -99,7 +100,8 @@ struct MapEntry
 	//}
 };
 
-namespace Verb
+
+namespace HttpVerb
 {
 	static LPCWSTR GET = L"GET";
 	static LPCWSTR POST = L"POST";
@@ -319,7 +321,7 @@ struct ServerConnection
 
 	bool RequestMapUpload(const string &mapName, const std::string &accessToken)
 	{
-		myRequest = OpenRequest(Verb::POST, L"/MapServer/rest/maps");
+		myRequest = OpenRequest(HttpVerb::POST, L"/MapServer/rest/maps");
 
 		bool okay = false;
 		if (myRequest != NULL)
@@ -383,7 +385,7 @@ struct ServerConnection
 	bool RequestMapDeletion(int id, const std::string & accessToken )
 	{
 		wstring path = L"/MapServer/rest/maps/" + to_wstring(id);
-		myRequest = OpenRequest(Verb::DELETE, path.c_str());
+		myRequest = OpenRequest(HttpVerb::DELETE, path.c_str());
 
 		bool okay = false;
 
@@ -430,7 +432,7 @@ struct ServerConnection
 	bool RequestMapDownload(int id)
 	{
 		wstring path = L"/MapServer/rest/maps/" + to_wstring(id);
-		myRequest = OpenRequest(Verb::GET, path.c_str());
+		myRequest = OpenRequest(HttpVerb::GET, path.c_str());
 
 		bool found = false;
 
@@ -472,9 +474,9 @@ struct ServerConnection
 		return found;
 	}
 
-	bool RequestGetMapList( std::vector<MapEntry> &entryVec )
+	bool RequestGetMapList( std::vector<CustomMapEntry> &entryVec )
 	{
-		myRequest = OpenRequest(Verb::GET, L"/MapServer/rest/maps");
+		myRequest = OpenRequest(HttpVerb::GET, L"/MapServer/rest/maps");
 
 		if (myRequest != NULL)
 		{
@@ -824,7 +826,7 @@ struct CustomMapClient
 		Aws::ShutdownAPI(AWSSDKOptions);
 	}
 
-	bool AttemptDeleteMapFromServer(MapEntry &entry)
+	bool AttemptDeleteMapFromServer(CustomMapEntry &entry)
 	{
 		if (IsLoggedIn())
 		{
@@ -848,7 +850,7 @@ struct CustomMapClient
 		{
 			if (serverConn.RequestMapUpload(mapName, cognitoInterface.GetAccessToken()))
 			{
-				MapEntry entry;
+				CustomMapEntry entry;
 				entry.name = mapName;
 				string file = entry.GetMapFileName();
 				s3Interface.UploadObject(path.c_str(), file.c_str(), cognitoInterface.username.c_str()); //assumed to work for now..
@@ -859,7 +861,7 @@ struct CustomMapClient
 		return false;
 	}
 
-	bool AttemptDownloadMapFromServer(const std::string &downloadPath, MapEntry &entry)
+	bool AttemptDownloadMapFromServer(const std::string &downloadPath, CustomMapEntry &entry)
 	{
 		if (serverConn.RequestMapDownload(entry.id))
 		{
@@ -905,7 +907,7 @@ struct CustomMapClient
 		return cognitoInterface.isLoggedIn;
 	}
 
-	std::vector<MapEntry> mapEntries;
+	std::vector<CustomMapEntry> mapEntries;
 
 private:
 	S3Interface s3Interface;
@@ -920,27 +922,16 @@ int main()
 	CustomMapClient customMapClient;
 	customMapClient.AnonymousInit();
 
-	customMapClient.AttemptUserLogin("test", "Shephard123~");
-	
+	//customMapClient.AttemptUserLogin("test", "Shephard123~");
 	
 	//customMapClient.AttemptUploadMapToServer("MyMaps/", "gateblank8");
-	customMapClient.AttempGetMapListFromServer();
+	//customMapClient.AttempGetMapListFromServer();
 
-	customMapClient.AttemptDeleteMapFromServer(customMapClient.mapEntries[1]);
+	//customMapClient.AttemptDeleteMapFromServer(customMapClient.mapEntries[1]);
 
 	customMapClient.AttempGetMapListFromServer();
 
 	customMapClient.PrintMapEntries();
-	//serverConn.RequestGetMapList();
-
-	//AttemptMapDeletionFromServer(serverConn.mapEntries[1]);
-
-	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
-
-	//customClient.AttempGetMapListFromServer();
-	//customClient.AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
-
-	//RunCognitoTest();
 
 	cout << endl << "done" << endl;
 	int x;
