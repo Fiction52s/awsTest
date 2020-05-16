@@ -99,10 +99,6 @@ struct MapEntry
 	//}
 };
 
-
-
-
-
 namespace Verb
 {
 	static LPCWSTR GET = L"GET";
@@ -644,6 +640,7 @@ struct S3Interface
 		}
 	}
 };
+Aws::String S3Interface::downloadDest = "";
 
 struct CognitoInterface
 {
@@ -786,7 +783,6 @@ struct CognitoInterface
 	}
 };
 
-Aws::String S3Interface::downloadDest = "";
 
 S3Interface s3Interface;
 ServerConnection serverConn;
@@ -801,14 +797,6 @@ void CreateClientsWithAnonymousCredentials()
 
 	s3Interface.InitWithCredentials(anonCreds);
 	cognitoInterface.InitWithCredentials(anonCreds);
-}
-
-void TestSignIn( const std::string &user, const std::string &pass )
-{
-	if (cognitoInterface.TryLogIn(user, pass))
-	{
-		s3Interface.InitWithCredentials(cognitoInterface.currCreds);
-	}
 }
 
 bool AttemptMapDeletionFromServer(MapEntry &entry)
@@ -854,8 +842,10 @@ bool AttemptMapDownloadFromServer( const std::string &downloadPath, MapEntry &en
 
 void RunCognitoTest()
 {
-	//cognitoInterface.TryLogIn("test", "Shephard123~");
-	TestSignIn( "test", "Shephard123~" );
+	if (cognitoInterface.TryLogIn("test", "Shephard123~"))
+	{
+		s3Interface.InitWithCredentials(cognitoInterface.currCreds);
+	}
 
 	if (cognitoInterface.s_IsLoggedIn)
 	{
