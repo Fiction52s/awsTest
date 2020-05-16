@@ -624,7 +624,7 @@ struct S3Interface
 		Aws::S3::Model::GetObjectRequest getReq;
 		getReq.WithBucket(bucketName.c_str());
 		getReq.WithKey(key);//"gateblank9.brknk");
-		getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", downloadDest.c_str(), std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
+		getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", downloadDest.c_str(), std::ios_base::in | std::ios_base::out | std::ios_base::trunc | std::ios_base::binary); });
 
 		auto outcome = s3Client->GetObject(getReq);
 
@@ -886,9 +886,10 @@ int main()
 
 	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
 
-	//serverConn.RequestGetMapList();
-	//AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
-	RunCognitoTest();
+	serverConn.RequestGetMapList();
+	AttemptMapDownloadFromServer("DownloadedMaps/", serverConn.mapEntries[0]);
+
+	//RunCognitoTest();
 
 	serverConn.CleanupServerConnection();
 
