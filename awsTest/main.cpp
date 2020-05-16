@@ -96,6 +96,16 @@ struct MapEntry
 		creatorName = j["creatorName"];
 	}
 
+	std::string GetMapFileName()
+	{
+		return string(name + ".brknk");
+	}
+
+	std::string CreateKey()
+	{
+		return string(creatorName + "/" + GetMapFileName());
+	}
+
 	//MapEntry(const std::string &p_name, const std::string &p_creatorName)
 	//{
 	//	//id = -1;
@@ -344,24 +354,28 @@ bool RequestMapUpload( const string &mapName )
 		AddHeaderContentTypeJSON();
 		AddHeaderSessionToken();
 
-		string message = "{"
+		json j;
+		j["name"] = mapName;
+		string message = j.dump();
+
+		/*string message = "{"
 			"\"name\":\"" + mapName + "\""
-			"}";
+			"}";*/
 		
 		if (SendRequestWithMessage(message))
 		{
 			if (WinHttpReceiveResponse(myRequest, NULL))
 			{
 				int statusCode = GetRequestStatusCode();
-				string headers = GetRequestHeaders();
-				string data = GetRequestData();
+				//string headers = GetRequestHeaders();
+				//string data = GetRequestData();
 
-				cout << "status code: " << statusCode << endl;
-				cout << "headers: " << endl;
-				cout << headers << endl;
+				//cout << "status code: " << statusCode << endl;
+				//cout << "headers: " << endl;
+				//cout << headers << endl;
 
-				cout << "return data:" << endl;
-				cout << data << endl;
+				//cout << "return data:" << endl;
+				//cout << data << endl;
 
 				if (statusCode == 200)
 				{
@@ -599,17 +613,15 @@ void UploadObject(const Aws::String &path, const Aws::String &file)
 	}
 }
 
-void DownloadObject( const Aws::String &path, const Aws::String &file )
+void DownloadObject( const Aws::String &downloadPath, const Aws::String &key, const Aws::String &file )
 {
 	//assumes its a map
-	mName = "DownloadedMaps/" + file;
-	//mName = map;
+	mName =  downloadPath + file;
 	cout << "downloading: " << file << endl;
-	Aws::String filePath = path + file;
 
 	Aws::S3::Model::GetObjectRequest getReq;
 	getReq.WithBucket(bucketName);
-	getReq.WithKey(filePath);//"gateblank9.brknk");
+	getReq.WithKey(key);//"gateblank9.brknk");
 	getReq.SetResponseStreamFactory([]() {return Aws::New<Aws::FStream>("mapfstream", mName.c_str() , std::ios_base::in | std::ios_base::out | std::ios_base::trunc); });
 
 	auto outcome = s3Client->GetObject(getReq);
@@ -765,7 +777,7 @@ bool AttemptMapDeletionFromServer(MapEntry &entry)
 {
 	if (RequestMapDeletion(entry.id))
 	{
-		cout << "map " << entry.name << "by user: " << entry.creatorName << " has been removed" << endl;
+		cout << "map " << entry.name << " by user: " << entry.creatorName << " has been removed" << endl;
 		return true;
 	}
 	else
@@ -775,13 +787,27 @@ bool AttemptMapDeletionFromServer(MapEntry &entry)
 	}
 }
 
-bool AttemptMapUploadToServer(const std::string &mapName)
+bool AttemptMapUploadToServer( const std::string &path, const std::string &mapName)
 {
 	if (RequestMapUpload(mapName))
 	{
-		string path = "MyMaps/";
-		string file = mapName + ".brknk";
+		MapEntry entry;
+		entry.name = mapName;
+		string file = entry.GetMapFileName();
 		UploadObject(path.c_str(), file.c_str()); //assumed to work for now..
+		return true;
+	}
+
+	return false;
+}
+
+bool AttemptMapDownloadFromServer( const std::string &downloadPath, MapEntry &entry)
+{
+	if (RequestMapDownload(entry.id))
+	{
+		string key = entry.CreateKey();
+		string file = entry.GetMapFileName();
+		DownloadObject( downloadPath.c_str(), key.c_str(), file.c_str());
 		return true;
 	}
 
@@ -812,20 +838,13 @@ void RunCognitoTest()
 		//string file = mapName + ".brknk";
 		//UploadObject(file);
 
-		//AttemptMapUploadToServer("gateblank9");
+		AttemptMapUploadToServer("MyMaps/", "gateblank9");
 
 		RequestGetMapList();
 
-		//MapEntry &currEntry = mapEntries[0];
-
 		AttemptMapDeletionFromServer(mapEntries[0]);
 
-		/*if (RequestMapDownload(currEntry.id))
-		{
-			string path = currEntry.creatorName + "/";
-			string file = currEntry.name + ".brknk";
-			DownloadObject(path.c_str(), file.c_str());
-		}*/
+		//AttemptMapDownloadFromServer("DownloadedMaps/", mapEntries[0]);
 
 		CleanupServerConnection();
 	}
